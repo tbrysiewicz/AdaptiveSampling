@@ -191,7 +191,7 @@ function default_is_complete(function_cache::Vector{Tuple{Vector{Float64},Any}})
     tol = 0.0
     if !is_disc
         values = filter(x -> isa(x, Number), getindex.(function_cache, 2))
-        tol = (max(values...) - min(values...))/16
+        tol = (max(values...) - min(values...))/53
     end
     local_is_complete = (p::Vector{Int}, FC:: Vector{Tuple{Vector{Float64},Any}};kwargs...) -> is_complete(p, FC; tol=tol, kwargs...) # Default function to determine completeness of polygons
     return local_is_complete
@@ -212,6 +212,18 @@ end
         - `complete_polygons`: A vector of vectors, each containing indices of the function_cache that represent complete polygons.
         - `incomplete_polygons`: A vector of vectors, each containing indices of the function_cache that represent incomplete polygons.
         - `is_complete`: A function that checks if a polygon is complete,
+    
+    To construct a ValuedSubdivision, you need to provide a function that takes a pair of real numbers as input (a single parameter) and returns a value. Keyword arguments include:
+        - `xlims`: The limits for the x-axis (default is [-1, 1]).
+        - `ylims`: The limits for the y-axis (default is [-1, 1]).
+        - `resolution`: The number of points in the subdivision (default is 1000).
+        - `strategy`: A preset strategy for generating the subdivision (default is :sierpinski).
+        - `mesh_function`: A custom mesh function to generate the initial mesh.
+    
+    # Example 
+    julia> f(x,y) = x + y
+    julia> VSD = ValuedSubdivision(f; resolution=3000, strategy=:quadtree)
+    ValuedSubdivision with 2916 function cache entries, 2277 complete polygons, and 532 incomplete polygons.
 """
 mutable struct ValuedSubdivision
     function_oracle::Function                           #This takes MANY parameters and returns a vector of values
@@ -230,13 +242,14 @@ mutable struct ValuedSubdivision
 
     
         VSD = new()
-        VSD.function_oracle = function_oracle
+        function_oracle_on_many_parameters(parameters) = map(p -> function_oracle(p[1], p[2]), parameters)
+        VSD.function_oracle = function_oracle_on_many_parameters
 
         # Generate initial mesh
         (polygons, parameters) = mesh_function(; xlims=xlims, ylims=ylims, resolution=resolution, kwargs...)
 
         # Solve for all pts in the initial mesh
-        function_oracle_values = function_oracle(parameters)
+        function_oracle_values = function_oracle_on_many_parameters(parameters)
         length(function_oracle_values) != length(parameters) && error("Did not solve for each parameter")
 
         # Create function cache
@@ -289,7 +302,19 @@ complete_polygons(VSD::ValuedSubdivision) = VSD.complete_polygons
 incomplete_polygons(VSD::ValuedSubdivision) = VSD.incomplete_polygons
 input_points(FC::Vector{Tuple{Vector{Float64}, Any}}) = getindex.(FC, 1)
 output_values(FC::Vector{Tuple{Vector{Float64}, Any}}) = getindex.(FC, 2)
+
+"""
+    input_points(VSD::ValuedSubdivision)
+
+    Extracts the points from a ValuedSubdivision, returning a vector of vectors of Float64.
+"""
 input_points(VSD::ValuedSubdivision) = input_points(function_cache(VSD))
+
+"""
+    output_values(VSD::ValuedSubdivision)
+
+    Extracts the output values (function oracle values) from a ValuedSubdivision, returning a vector.
+"""
 output_values(VSD::ValuedSubdivision) = output_values(function_cache(VSD))
 is_discrete(VSD::ValuedSubdivision) = is_discrete(function_cache(VSD))
 
@@ -417,8 +442,24 @@ function refine!(VSD::ValuedSubdivision, resolution::Int64;	strategy = nothing, 
     return(VSD)
 end
 
+"""
+    refine!(VSD::ValuedSubdivision; kwargs...)
+
+    Refines a ValuedSubdivision via incomplete polygon subdivision.
+    
+    # Keyword Arguments
+        - `resolution`: An upper bound on the number of new points to be added to the subdivision during refinement (default is 1000000).
+        - `strategy`: The refinement strategy to be used (default is :sierpinski in the case that the subdivision is triangular and :quadtree in the case that the subdivision is rectangular).
+    
+    # Example
+    julia> f(x,y) = x + y
+    julia> VSD = ValuedSubdivision(f; resolution=3000, strategy=:quadtree)
+    ValuedSubdivision with 2916 function cache entries, 2277 complete polygons, and 532 incomplete polygons.
+    julia> refine!(VSD)
+    Resolution used:2092
+    ValuedSubdivision with 5008 function cache entries, 3493 complete polygons, and 912 incomplete polygons.
+"""
 function refine!(VSD::ValuedSubdivision; kwargs...)
-    # Default refinement strategy is quadtree
     return refine!(VSD, 1000000; kwargs...)
 end
 
@@ -509,8 +550,8 @@ end
     The function accepts keyword arguments for customization, such as 
         -`xlims`, 
         -`ylims`,
-        -`plot_log_transform`,
-        -`plot_all_polygons`
+        -`plot_log_transform` (default is false),
+        -`plot_all_polygons` (default is false in the case that function oracle is discrete, true otherwise)
 """
 function visualize(VSD::ValuedSubdivision; kwargs...) :: Plots.Plot
     xl = get(kwargs, :xlims, [min(map(x->x[1][1],function_cache(VSD))...),max(map(x->x[1][1],function_cache(VSD))...)])
