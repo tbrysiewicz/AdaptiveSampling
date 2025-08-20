@@ -92,7 +92,7 @@ function rectangular_mesh(; kwargs...)
     return (rectangles, parameters)
 end
 
-function one_dimensional_simple_mesh(; kwargs...)
+function one_dimensional_mesh(; kwargs...)
     xlims = get(kwargs, :xlims, [-1,1])
     resolution = get(kwargs, :resolution, 1000)
     parameters = range(xlims[1], xlims[2], length=resolution)
@@ -162,7 +162,7 @@ global VISUALIZATION_STRATEGIES = Dict{Symbol, Dict{Symbol, Any}}(
     :sierpinski => Dict{Symbol, Any}(:mesh_function => trihexagonal_mesh, :refinement_method => sierpinski_point_insertion),
     :random => Dict{Symbol, Any}(:mesh_function => trihexagonal_mesh, :refinement_method => random_point_insertion),
     :careful => Dict{Symbol, Any}(:mesh_function => trihexagonal_mesh, :refinement_method => barycenter_point_insertion),
-    :onedimensional => Dict{Symbol, Any}(:mesh_function => one_dimensional_simple_mesh, :refinement_method => one_dimensional_midpoint_insertion)
+    :onedimensional => Dict{Symbol, Any}(:mesh_function => one_dimensional_mesh, :refinement_method => one_dimensional_midpoint_insertion)
 )
 
 #==============================================================================#
@@ -265,7 +265,7 @@ mutable struct ValuedSubdivision
 
         VSD = new()
         function_oracle_on_many_parameters(parameters) = map(p -> function_oracle(p...), parameters)
-        VSD.function_oracle = function_oracle_on_many_parameters
+        VSD.function_oracle = function_oracle
 
         # Generate initial mesh
         (polygons, parameters) = mesh_function(; xlims=xlims, ylims=ylims, resolution=resolution, kwargs...)
@@ -344,6 +344,8 @@ function is_complete(polygon::Vector{Int}, VSD::ValuedSubdivision; kwargs...)
     VSD.is_complete(polygon, function_cache(VSD); kwargs...)
 end
 
+dimension(VSD::ValuedSubdivision) = length(methods(function_oracle(VSD))[1].sig.parameters) - 1
+
 #==============================================================================#
 # POLYGON MANAGEMENT
 #==============================================================================#
@@ -420,17 +422,17 @@ function refine!(VSD::ValuedSubdivision, resolution::Int64;	strategy = nothing, 
 
     local_refinement_method = get(kwargs, :refinement_method, VISUALIZATION_STRATEGIES[strategy][:refinement_method])
 
-    FO = function_oracle(VSD)
+    FO(parameters) = map(p -> function_oracle(VSD)(p...), parameters)
     refined_polygons::Vector{Vector{Int64}} = []
     polygons_to_evaluate_and_sort::Vector{Vector{Vector{Float64}}} = []
     new_parameters_to_evaluate::Vector{Vector{Float64}} = []
     resolution_used = 0
 
     IP = []
-    if length(complete_polygons(VSD)[1]) == 2
-        IP = sort(incomplete_polygons(VSD), by = x -> abs((VSD.function_cache[x[1]][1] - VSD.function_cache[x[2]][1])[1]), rev = true)
+    if dimension(VSD) == 1
+        IP = sort(incomplete_polygons(VSD), by = x -> abs((function_cache(VSD)[x[1]][1] - function_cache(VSD)[x[2]][1])[1]), rev = true)
     else
-        IP = sort(incomplete_polygons(VSD), by = x -> area_of_polygon([VSD.function_cache[v][1] for v in x]), rev = true)
+        IP = sort(incomplete_polygons(VSD), by = x -> area_of_polygon([function_cache(VSD)[v][1] for v in x]), rev = true)
     end
     for P in IP
         P_parameters = [function_cache(VSD)[v][1] for v in P]
@@ -549,7 +551,7 @@ function median(V::AbstractVector)
     else
         return (Vsorted[n ÷ 2] + Vsorted[n ÷ 2 + 1]) / 2
     end
-end
+end 
 
 #==============================================================================#
 # VISUALIZATION FUNCTIONS
@@ -581,22 +583,18 @@ end
 function visualize(VSD::ValuedSubdivision; kwargs...) :: Plots.Plot
     xl = get(kwargs, :xlims, [min(map(x->x[1][1],function_cache(VSD))...),max(map(x->x[1][1],function_cache(VSD))...)])
     yl = []
-    if length(complete_polygons(VSD)[1]) > 2
-        yl = get(kwargs, :ylims, [min(map(x->x[1][2],function_cache(VSD))...),max(map(x->x[1][2],function_cache(VSD))...)])
-    else
-        sorted_values = sort(output_values(VSD))
-        yl = [sorted_values[1] - 1, sorted_values[end] + 1]
-    end
+    MyPlot = []
     plot_log_transform = get(kwargs, :plot_log_transform, false)
     plot_all_polygons = get(kwargs, :plot_all_polygons, is_discrete(VSD) == false)
 
-    MyPlot = []
-    if length(complete_polygons(VSD)[1]) > 2
+    if dimension(VSD) > 1
+        yl = get(kwargs, :ylims, [min(map(x->x[1][2],function_cache(VSD))...),max(map(x->x[1][2],function_cache(VSD))...)])
         MyPlot = plot(xlims = xl, ylims = yl, aspect_ratio = :equal, background_color_inside=:black; kwargs...)
     else
-        MyPlot = plot(xlims = xl, ylims = yl, background_color_inside=:black; kwargs...)
+        sorted_values = sort(output_values(VSD))
+        yl = [sorted_values[1] - 1, sorted_values[end] + 1]
+        MyPlot = plot(xlims = xl, ylims = yl, background_color_inside = :white; kwargs...)
     end
-
     
     polygon_list = plot_all_polygons == true ? vcat(complete_polygons(VSD), incomplete_polygons(VSD)) : complete_polygons(VSD)
     polygons_to_draw = map(P->map(first,function_cache(VSD)[P]), polygon_list)
@@ -612,19 +610,12 @@ function visualize(VSD::ValuedSubdivision; kwargs...) :: Plots.Plot
     shapes = Shape[]
     colors = []
     
-    if length(complete_polygons(VSD)[1]) > 2
+    if dimension(VSD) > 1
         for (poly_pts, value) in zip(polygons_to_draw, polygon_values)
             push!(shapes, Shape([(t[1], t[2]) for t in poly_pts]))
             push!(colors, value==nothing ? :white : cgrad(:thermal, rev=false)[value/max_value])
         end
         MyPlot = plot!(shapes; fillcolor=permutedims(colors), linecolor=permutedims(colors), linewidth=0, label = false)
-    else
-        for (poly_pts, value) in zip(polygons_to_draw, polygon_values)
-            plot!([poly_pts[1][1], poly_pts[2][1]], [value, value], linecolor =:white, linewidth=2, label = false)
-        end
-    end
-
-    if length(complete_polygons(VSD)[1]) > 2
         legend_values = sort(real_values, rev=true)
         if in(nothing,polygon_values)
             pushfirst!(legend_values, nothing)
@@ -640,7 +631,12 @@ function visualize(VSD::ValuedSubdivision; kwargs...) :: Plots.Plot
             # Add a colorbar for the continuous values
             scatter!([NaN], [NaN]; zcolor = [min(real_values...), max(real_values...)], color = cgrad(:thermal, rev = false), markersize = 0, colorbar = true, label = false)
         end
+    else
+        for (poly_pts, value) in zip(polygons_to_draw, polygon_values)
+            plot!([poly_pts[1][1], poly_pts[2][1]], [value, value], linecolor =:white, linewidth=2, label = false)
+        end
     end
+
     return(MyPlot)
 end
 
