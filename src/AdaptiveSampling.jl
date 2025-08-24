@@ -4,7 +4,6 @@ import Base: getindex, iterate
 
 using Plots
 using DelaunayTriangulation: triangulate, each_solid_triangle, triangle_vertices, get_point, convert_boundary_points_to_indices
-using GLMakie: mesh, colormap
 
 #==============================================================================#
 # EXPORTS
@@ -677,5 +676,43 @@ function save(P::Plots.Plot, filename::String; file_extension = "png", dpi = 300
     savefig(P, filename)
     println("Plot saved to $filename")
 end
+#=
+function visualize_with_makie(VSD::ValuedSubdivision; kwargs...)
+    xl = get(kwargs, :xlims, [min(map(x->x[1][1],function_cache(VSD))...),max(map(x->x[1][1],function_cache(VSD))...)])
+    yl = get(kwargs, :ylims, [min(map(x->x[1][2],function_cache(VSD))...),max(map(x->x[1][2],function_cache(VSD))...)])
+    plot_log_transform = get(kwargs, :plot_log_transform, false)
+    plot_all_polygons = get(kwargs, :plot_all_polygons, is_discrete(VSD) == false)
+    
+    polygon_list = plot_all_polygons == true ? vcat(complete_polygons(VSD), incomplete_polygons(VSD)) : complete_polygons(VSD)
+    polygons_to_draw = map(P->map(first,function_cache(VSD)[P]), polygon_list)
+    # we remove non-numbers when computing means so that non-numbers function as wild cards essentially 
+    polygon_values = map(P-> mean(filter(x->isa(x,Number),map(last,function_cache(VSD)[P]))), polygon_list)
+    if plot_log_transform
+        # If we are plotting log transformed values, we need to transform the polygon values
+        polygon_values = map(x->x==nothing ? nothing : log(x+1), polygon_values)
+    end
+    # It is still possible that the mean returns 'nothing' if all values are non-numbers
+    real_values = filter(x->x!=nothing, unique(polygon_values))
+    max_value = max(real_values...)
+    vertices = Array{Float64}(undef, 0, 2)
+    faces = Array{Int}(undef, 0, 3)
+    values = []
+    for (poly_pts, value) in zip(polygons_to_draw, polygon_values)
+        for v in poly_pts
+            vertices = vcat(vertices, [v[1] v[2]])
+            push!(values, value/max_value)
+        end
+        l = Int(size(vertices, 1))
+        faces = vcat(faces, [l-2 l-1 l])
+    end
+    fig = Figure()
+    ax = Axis(fig[1,1]; xlabel="X axis", ylabel="Y axis", title="My Mesh Plot", aspect=DataAspect())
+    plt = mesh!(ax, vertices, faces, color=values, shading=false)
+    #cb = Colorbar(fig[1,2], plt, label="Normalized Value")  # optional colorbar
 
+    return fig
+    #return mesh(vertices, faces, color=values, shading=false)
+end
+=#
 end # module AdaptiveSampling
+
