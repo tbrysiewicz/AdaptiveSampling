@@ -4,6 +4,7 @@ import Base: getindex, iterate
 
 using Plots
 using DelaunayTriangulation: triangulate, each_solid_triangle, triangle_vertices, get_point, convert_boundary_points_to_indices
+using GLMakie: Figure, Axis, DataAspect, mesh, mesh!
 
 #==============================================================================#
 # EXPORTS
@@ -21,7 +22,9 @@ export
     complete_polygons,
     incomplete_polygons,
     animate_refinement,         # Animate the refinement process
-    save
+    save,
+    adjust!,
+    visualize_with_makie
 
 #==============================================================================#
 # MESH FUNCTIONS
@@ -676,10 +679,8 @@ function save(P::Plots.Plot, filename::String; file_extension = "png", dpi = 300
     savefig(P, filename)
     println("Plot saved to $filename")
 end
-#=
+
 function visualize_with_makie(VSD::ValuedSubdivision; kwargs...)
-    xl = get(kwargs, :xlims, [min(map(x->x[1][1],function_cache(VSD))...),max(map(x->x[1][1],function_cache(VSD))...)])
-    yl = get(kwargs, :ylims, [min(map(x->x[1][2],function_cache(VSD))...),max(map(x->x[1][2],function_cache(VSD))...)])
     plot_log_transform = get(kwargs, :plot_log_transform, false)
     plot_all_polygons = get(kwargs, :plot_all_polygons, is_discrete(VSD) == false)
     
@@ -707,12 +708,45 @@ function visualize_with_makie(VSD::ValuedSubdivision; kwargs...)
     end
     fig = Figure()
     ax = Axis(fig[1,1]; xlabel="X axis", ylabel="Y axis", title="My Mesh Plot", aspect=DataAspect())
-    plt = mesh!(ax, vertices, faces, color=values, shading=false)
-    #cb = Colorbar(fig[1,2], plt, label="Normalized Value")  # optional colorbar
-
+    mesh!(ax, vertices, faces, color=values, shading=false)
+    #cb = Colorbar(fig[1,2], plt)
     return fig
-    #return mesh(vertices, faces, color=values, shading=false)
 end
-=#
+
+#==============================================================================#
+# VSD WINDOW MODIFICATION FUNCTIONS
+#==============================================================================#
+
+#this function assumes that the VSD is 2-dimensional, I haven't figured it out for a 1-dimensional VSD yet.
+function adjust!(VSD::ValuedSubdivision; kwargs...)
+    xl = get(kwargs, :xlims, [min(map(x->x[1][1],function_cache(VSD))...),max(map(x->x[1][1],function_cache(VSD))...)])
+    yl = get(kwargs, :ylims, [min(map(x->x[1][2],function_cache(VSD))...),max(map(x->x[1][2],function_cache(VSD))...)])
+    resolution = get(kwargs, :resolution, 1000)
+    new_xlims = get(kwargs, :new_xlims, xl)
+    new_ylims = get(kwargs, :new_ylims, yl)
+    if (new_xlims == xl && new_ylims == yl) || !(new_xlims isa Vector{<:Real}) || !(new_ylims isa Vector{<:Real})
+        error("Must pass new xlims and/or ylims values to adjust ValuedSubdivision. xlims and ylims must be real vectors.")
+    end
+    FO = function_oracle(VSD)
+    FC = function_cache(VSD)
+    function_oracle_on_many_parameters(parameters) = map(p -> FO(p...), parameters)
+    new_function_cache = Vector{Tuple{Vector{Float64},Any}}([])
+    for i in FC
+        if i[1][1] >= new_xlims[1] && i[1][1] <= new_xlims[2] && i[1][2] >= new_ylims[1] && i[1][2] <= new_ylims[2]
+            push!(new_function_cache, i)
+        end
+    end
+    x_values, y_values = initial_parameter_distribution(xlims = new_xlims, ylims = new_ylims, resolution = resolution)
+    new_parameters = [[x,y] for x in x_values for y in y_values]
+    function_oracle_values = function_oracle_on_many_parameters(new_parameters)
+    length(function_oracle_values) != length(new_parameters) && error("Did not evaluate at each parameter")
+    for i in eachindex(function_oracle_values)
+        push!(new_function_cache, (new_parameters[i], (function_oracle_values[i])))
+    end
+    VSD.function_cache = new_function_cache
+    delaunay_retriangulate!(VSD)
+    return VSD
+end
+
 end # module AdaptiveSampling
 
