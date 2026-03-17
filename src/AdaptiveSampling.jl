@@ -34,11 +34,14 @@ function initial_parameter_distribution(; kwargs...)
     xlims = get(kwargs, :xlims, [-1,1])
     ylims = get(kwargs, :ylims, [-1,1])
     resolution = get(kwargs, :resolution, 1000)
-    xlength = xlims[2] - xlims[1]
-    ylength = ylims[2] - ylims[1]
+    xlength = abs(xlims[2] - xlims[1])
+    ylength = abs(ylims[2] - ylims[1])
 
-    x_values = range(xlims[1], xlims[2], Int(floor(sqrt((((xlength)/(xlength + ylength))*resolution)/(1 - ((xlength)/(xlength + ylength)))))))
-    y_values = range(ylims[1], ylims[2], Int(floor(sqrt((((ylength)/(xlength + ylength))*resolution)/(1 - ((ylength)/(xlength + ylength)))))))
+    nx = max(2, floor(Int, sqrt(resolution * xlength / ylength)))
+    ny = max(2, floor(Int, sqrt(resolution * ylength / xlength)))
+
+    x_values = range(xlims[1], xlims[2], length=nx)
+    y_values = range(ylims[1], ylims[2], length=ny)
 
     return x_values, y_values
 end
@@ -50,29 +53,25 @@ function trihexagonal_mesh(; kwargs...)
 
     x_values, y_values = initial_parameter_distribution(; xlims=xlims, ylims=ylims, resolution=resolution)
 
-    shift_amount = (x_values[2] - x_values[1])/2 	
-    parameters = [[i - isodd(findfirst(x->x==j, y_values))*shift_amount, j] for i in x_values for j in y_values]
+    shift_amount = (x_values[2] - x_values[1]) / 2
+    parameters = [[x - (isodd(j_index) ? shift_amount : 0.0), y] for x in x_values for (j_index, y) in enumerate(y_values)]
 
-    parameters_as_matrix = reshape(parameters, length(x_values), length(y_values))
-
+    vertices = hcat(parameters...)
+    tri = triangulate(vertices)
     triangles = Vector{Vector{Int}}([])
-    for i in 1:length(x_values)-1
-        for j in 1:length(y_values)-1
-            tl_index = findfirst(x->x == parameters_as_matrix[i,j], parameters)
-            tr_index = findfirst(x->x == parameters_as_matrix[i+1,j], parameters)
-            bl_index = findfirst(x->x == parameters_as_matrix[i, j+1], parameters)
-            br_index = findfirst(x->x == parameters_as_matrix[i+1, j+1], parameters)
-
-            if isodd(i)
-                push!(triangles,[tl_index, tr_index, bl_index])
-                push!(triangles,[bl_index, tr_index, br_index])
-            else
-                push!(triangles,[tl_index, tr_index, br_index])
-                push!(triangles,[bl_index, tl_index, br_index])
-            end
-        end
+    for T in each_solid_triangle(tri)
+        i, j, k = triangle_vertices(T)
+        p1, p2, p3 = get_point(tri, i, j, k)
+        v1 = [p1[1], p1[2]]
+        v2 = [p2[1], p2[2]]
+        v3 = [p3[1], p3[2]]
+        idx1 = findfirst(x -> x == v1, parameters)
+        idx2 = findfirst(x -> x == v2, parameters)
+        idx3 = findfirst(x -> x == v3, parameters)
+        push!(triangles, [idx1, idx2, idx3])
     end
-    return(triangles,parameters)
+
+    return (triangles, parameters)
 end
 
 function rectangular_mesh(; kwargs...)
@@ -81,14 +80,18 @@ function rectangular_mesh(; kwargs...)
     resolution = get(kwargs, :resolution, 1000)
     x_values, y_values = initial_parameter_distribution(; xlims=xlims, ylims=ylims, resolution=resolution)
     parameters = [[i,j] for i in x_values for j in y_values]
-    parameters_as_matrix = reshape(parameters, length(x_values), length(y_values))
+
+    nx = length(x_values)
+    ny = length(y_values)
+    linear_index(i, j) = (i - 1) * ny + j
+
     rectangles = Vector{Vector{Int}}([])
-    for i in 1:length(x_values)-1
-        for j in 1:length(y_values)-1
-            tl_index = findfirst(x->x == parameters_as_matrix[i,j], parameters)
-            tr_index = findfirst(x->x == parameters_as_matrix[i+1,j], parameters)
-            bl_index = findfirst(x->x == parameters_as_matrix[i, j+1], parameters)
-            br_index = findfirst(x->x == parameters_as_matrix[i+1, j+1], parameters)
+    for i in 1:(nx - 1)
+        for j in 1:(ny - 1)
+            tl_index = linear_index(i, j)
+            tr_index = linear_index(i + 1, j)
+            bl_index = linear_index(i, j + 1)
+            br_index = linear_index(i + 1, j + 1)
             push!(rectangles, [tl_index, tr_index, br_index, bl_index])
         end
     end
@@ -412,19 +415,7 @@ function area_of_polygon(P::Vector{Vector{Float64}})::Float64
     return 0.5 * abs(area)
 end
 
-function refine!(VSD::ValuedSubdivision, resolution::Int64;	strategy = nothing, kwargs...)
-
-    if strategy === nothing
-        n = length(complete_polygons(VSD)[1])
-        strategy = n == 4 ? :quadtree : n == 3 ? :sierpinski : n == 2 ? :onedimensional : strategy
-    end
-
-    if in(strategy, collect(keys(VISUALIZATION_STRATEGIES))) == false
-        error("Invalid strategy inputted. Valid strategies include:",keys(VISUALIZATION_STRATEGIES),".")
-    end
-
-    local_refinement_method = get(kwargs, :refinement_method, VISUALIZATION_STRATEGIES[strategy][:refinement_method])
-
+function refine_once!(VSD::ValuedSubdivision, resolution::Int64, local_refinement_method::Function)
     FO(parameters) = map(p -> function_oracle(VSD)(p...), parameters)
     refined_polygons::Vector{Vector{Int64}} = []
     polygons_to_evaluate_and_sort::Vector{Vector{Vector{Float64}}} = []
@@ -437,25 +428,31 @@ function refine!(VSD::ValuedSubdivision, resolution::Int64;	strategy = nothing, 
     else
         IP = sort(incomplete_polygons(VSD), by = x -> area_of_polygon([function_cache(VSD)[v][1] for v in x]), rev = true)
     end
+
     for P in IP
         P_parameters = [function_cache(VSD)[v][1] for v in P]
         new_params, new_polygons = local_refinement_method(P_parameters)
-        push!(refined_polygons, P)
-        push!(polygons_to_evaluate_and_sort, new_polygons...)
+        polygon_has_new_points = false
         for p in new_params
             if !(p in new_parameters_to_evaluate) && !(p in input_points(VSD))
                 push!(new_parameters_to_evaluate, p)
                 resolution_used += 1
+                polygon_has_new_points = true
             end
+        end
+        if polygon_has_new_points
+            push!(refined_polygons, P)
+            push!(polygons_to_evaluate_and_sort, new_polygons...)
         end
         resolution_used >= resolution && break
     end
+
+    resolution_used == 0 && return 0
 
     for P in refined_polygons
         delete_from_incomplete_polygons!(VSD, P)
     end
 
-    length(new_parameters_to_evaluate) == 0 && return resolution_used
     function_oracle_values = FO(new_parameters_to_evaluate)
     length(function_oracle_values) != length(new_parameters_to_evaluate) && error("Did not evaluate at each parameter")
     for i in eachindex(function_oracle_values)
@@ -464,11 +461,39 @@ function refine!(VSD::ValuedSubdivision, resolution::Int64;	strategy = nothing, 
 
     for P in polygons_to_evaluate_and_sort
         polygon = [findfirst(x->x[1]==y, function_cache(VSD)) for y in P]
-        push_to_incomplete_polygons!(VSD, polygon) 
+        push_to_incomplete_polygons!(VSD, polygon)
     end
-    
+
     check_completeness!(VSD)
-    println("Resolution used:", resolution_used)
+    return resolution_used
+end
+
+function refine!(VSD::ValuedSubdivision, resolution::Int64;	strategy = nothing, kwargs...)
+    if strategy === nothing
+        n = length(complete_polygons(VSD)[1])
+        strategy = n == 4 ? :quadtree : n == 3 ? :careful : n == 2 ? :onedimensional : strategy
+    end
+
+    if in(strategy, collect(keys(VISUALIZATION_STRATEGIES))) == false
+        error("Invalid strategy inputted. Valid strategies include:",keys(VISUALIZATION_STRATEGIES),".")
+    end
+
+    local_refinement_method = get(kwargs, :refinement_method, VISUALIZATION_STRATEGIES[strategy][:refinement_method])
+
+    if strategy == :careful && dimension(VSD) > 1
+        delaunay_retriangulate!(VSD)
+    end
+
+    total_resolution_used = 0
+    remaining = resolution
+    while remaining > 0
+        used_this_pass = refine_once!(VSD, remaining, local_refinement_method)
+        used_this_pass == 0 && break
+        total_resolution_used += used_this_pass
+        remaining = resolution - total_resolution_used
+    end
+
+    println("Resolution used:", total_resolution_used)
     return(VSD)
 end
 
