@@ -1,10 +1,57 @@
 module AdaptiveSampling
 
-import Base: getindex, iterate
+using DelaunayTriangulation: triangulate, each_solid_triangle, triangle_vertices, get_point
+import GLMakie
 
-using Plots
-using DelaunayTriangulation: triangulate, each_solid_triangle, triangle_vertices, get_point, convert_boundary_points_to_indices
-using GLMakie: Figure, Axis, DataAspect, mesh, mesh!
+const FunctionCache = Vector{Tuple{Vector{Float64},Any}}
+const Polygon = Vector{Int64}
+const PolygonList = Vector{Polygon}
+const DEFAULT_DISCRETE_LEGEND_LIMIT = 10
+
+point_key(point::AbstractVector) = Tuple(Float64.(point))
+
+function point_index_dict(function_cache::AbstractVector{<:Tuple})
+    indices = Dict{Tuple,Int64}()
+    for (i, (point, _)) in pairs(function_cache)
+        key = point_key(point)
+        haskey(indices, key) || (indices[key] = i)
+    end
+    return indices
+end
+
+is_real_value(value) = value isa Real
+
+function oracle_dimension(function_oracle::Function)
+    return length(methods(function_oracle)[1].sig.parameters) - 1
+end
+
+function checked_batch_oracle(function_oracle::Function)
+    return function checked_oracle(points)
+        values = function_oracle(points)
+        if !(values isa AbstractVector) || length(values) != length(points)
+            error("Batched function oracle must return one output value for each input point.")
+        end
+        return collect(values)
+    end
+end
+
+function single_point_oracle(function_oracle::Function)
+    return points -> map(p -> function_oracle(p...), points)
+end
+
+function try_evaluate_oracle(function_oracle::Function, points)
+    try
+        oracle = checked_batch_oracle(function_oracle)
+        return oracle, oracle(points)
+    catch batch_error
+        try
+            oracle = single_point_oracle(function_oracle)
+            return oracle, oracle(points)
+        catch single_point_error
+            return nothing
+        end
+    end
+end
 
 #==============================================================================#
 # EXPORTS
@@ -55,6 +102,7 @@ function trihexagonal_mesh(; kwargs...)
 
     shift_amount = (x_values[2] - x_values[1]) / 2
     parameters = [[x - (isodd(j_index) ? shift_amount : 0.0), y] for x in x_values for (j_index, y) in enumerate(y_values)]
+    parameter_indices = Dict(point_key(p) => i for (i, p) in pairs(parameters))
 
     vertices = hcat(parameters...)
     tri = triangulate(vertices)
@@ -65,9 +113,9 @@ function trihexagonal_mesh(; kwargs...)
         v1 = [p1[1], p1[2]]
         v2 = [p2[1], p2[2]]
         v3 = [p3[1], p3[2]]
-        idx1 = findfirst(x -> x == v1, parameters)
-        idx2 = findfirst(x -> x == v2, parameters)
-        idx3 = findfirst(x -> x == v3, parameters)
+        idx1 = parameter_indices[point_key(v1)]
+        idx2 = parameter_indices[point_key(v2)]
+        idx3 = parameter_indices[point_key(v3)]
         push!(triangles, [idx1, idx2, idx3])
     end
 
@@ -180,7 +228,7 @@ global VISUALIZATION_STRATEGIES = Dict{Symbol, Dict{Symbol, Any}}(
 
 Heuristically check if the output values in the function cache are discrete. A function is considered discrete if it has fewer than 50 unique output values.
 """
-function is_discrete(function_cache::Vector{Tuple{Vector{Float64},Any}})
+function is_discrete(function_cache::AbstractVector{<:Tuple})
     # Check if the output values are discrete
     output_values = getindex.(function_cache, 2)
     unique_count = length(unique(output_values))
@@ -193,30 +241,25 @@ end
     The default function to determine if a polygon is complete.
     A polygon is considered complete if all its vertices have been evaluated and the output values are within a specified tolerance.
 """
-function is_complete(polygon::Vector{Int}, FC::Vector{Tuple{Vector{Float64},Any}}; tol = 0.0) 
+function is_complete(polygon::Vector{Int}, FC::AbstractVector{<:Tuple}; tol = 0.0)
     vals = [FC[v][2] for v in polygon]
-    vertex_function_values = sort(filter(x->isa(x,Number),vals))
-    if length(vertex_function_values) == 0
-        return false # If there are no vertices, we consider it incomplete
-    end
-    if (vertex_function_values[end] - vertex_function_values[1]) <= tol
-        return true
-    else
-        return false
-    end
+    vertex_function_values = sort(filter(is_real_value, vals))
+    isempty(vertex_function_values) && return false
+    return (vertex_function_values[end] - vertex_function_values[1]) <= tol
 end
 
-function default_is_complete(function_cache::Vector{Tuple{Vector{Float64},Any}})
+function default_is_complete(function_cache::AbstractVector{<:Tuple})
     # Checking whether the function is continuous or discrete
 
     is_disc = is_discrete(function_cache)
     tol = 0.0
     if !is_disc
-        values = filter(x -> isa(x, Number), getindex.(function_cache, 2))
-        tol = (max(values...) - min(values...))/16
+        values = filter(is_real_value, getindex.(function_cache, 2))
+        if !isempty(values)
+            tol = (maximum(values) - minimum(values))/16
+        end
     end
-    local_is_complete = (p::Vector{Int}, FC:: Vector{Tuple{Vector{Float64},Any}};kwargs...) -> is_complete(p, FC; tol=tol, kwargs...) # Default function to determine completeness of polygons
-    return local_is_complete
+    return (p::Vector{Int}, FC::AbstractVector{<:Tuple}; kwargs...) -> is_complete(p, FC; tol=tol, kwargs...)
 end
 
 #==============================================================================#
@@ -226,16 +269,18 @@ end
 """
     ValuedSubdivision
 
-    A mutable struct representing a subdivision of a function's domain into polygons and a caching of the function values over the vertices of 
-        those polygons. 
+    A mutable struct representing a subdivision of a function's domain into polygons and a cache of function values over the vertices of
+        those polygons.
     The fields of a ValuedSubdivision include:
-        - `function_oracle`: A function that takes many parameters and returns a vector of values.
-        - `function_cache`: A vector of tuples, each containing a vector of input parameters and their corresponding output value.
+        - `function_oracle`: A batched evaluator that takes a vector of input points and returns one output value for each point.
+        - `function_cache`: A vector of tuples, each containing one sampled input point and the corresponding output value.
         - `complete_polygons`: A vector of vectors, each containing indices of the function_cache that represent complete polygons.
         - `incomplete_polygons`: A vector of vectors, each containing indices of the function_cache that represent incomplete polygons.
         - `is_complete`: A function that checks if a polygon is complete,
     
-    To construct a ValuedSubdivision, you need to provide a function that takes a pair of real numbers as input (a single parameter) and returns a value. Keyword arguments include:
+    To construct a ValuedSubdivision, provide either a batched oracle `f(points)` that returns one value for each point, or a single-point oracle
+    `f(x)` / `f(x, y)`. Single-point oracles are wrapped into batched evaluators internally. For a one-dimensional batched oracle,
+    pass `strategy=:onedimensional` so the initial mesh has one-coordinate points. Keyword arguments include:
         - `xlims`: The limits for the x-axis (default is [-1, 1]).
         - `ylims`: The limits for the y-axis (default is [-1, 1]).
         - `resolution`: The number of points in the subdivision (default is 1000).
@@ -248,11 +293,14 @@ end
     ValuedSubdivision with 2916 function cache entries, 2277 complete polygons, and 532 incomplete polygons.
 """
 mutable struct ValuedSubdivision
-    function_oracle::Function                           #This takes MANY parameters and returns a vector of values
-    function_cache::Vector{Tuple{Vector{Float64},Any}}
-    complete_polygons::Vector{Vector{Int64}}            # Given as indices of function_cache
-    incomplete_polygons::Vector{Vector{Int64}}
+    function_oracle::Function                           # Batched evaluator: points -> values
+    function_cache::FunctionCache
+    point_indices::Dict{Tuple,Int64}
+    complete_polygons::PolygonList                      # Given as indices of function_cache
+    incomplete_polygons::PolygonList
     is_complete::Function
+    dimension::Int64
+    strategy::Symbol
 
     function ValuedSubdivision(function_oracle::Function; kwargs...)
         #Pull kwargs
@@ -260,40 +308,61 @@ mutable struct ValuedSubdivision
         ylims = get(kwargs, :ylims, [-1,1])
         resolution = get(kwargs, :resolution, 1000)
         strategy = get(kwargs, :strategy, :sierpinski)
-        nargs = length(methods(function_oracle)[1].sig.parameters) - 1 #checking how many arguments the function_oracle takes (1 or 2)
-        if nargs == 1
-            strategy = :onedimensional # If the function oracle takes only one parameter, we use the one-dimensional strategy
-        elseif nargs > 2
-            error("Function oracle must take either 1 or 2 parameters.")
+        strategy_was_provided = haskey(kwargs, :strategy)
+        candidate_strategies = Symbol[strategy]
+        if !strategy_was_provided && oracle_dimension(function_oracle) == 1 && strategy != :onedimensional
+            push!(candidate_strategies, :onedimensional)
         end
 
-        mesh_function = get(kwargs, :mesh_function, VISUALIZATION_STRATEGIES[strategy][:mesh_function])
+        polygons = nothing
+        parameters = nothing
+        function_oracle_values = nothing
+        batched_oracle = nothing
+        dimension = nothing
+        effective_strategy = nothing
+
+        for candidate_strategy in candidate_strategies
+            if !haskey(VISUALIZATION_STRATEGIES, candidate_strategy)
+                error("Invalid strategy inputted. Valid strategies include:",keys(VISUALIZATION_STRATEGIES),".")
+            end
+
+            mesh_function = get(kwargs, :mesh_function, VISUALIZATION_STRATEGIES[candidate_strategy][:mesh_function])
+            candidate_polygons, candidate_parameters = mesh_function(; xlims=xlims, ylims=ylims, resolution=resolution, kwargs...)
+            evaluation = try_evaluate_oracle(function_oracle, candidate_parameters)
+            evaluation === nothing && continue
+
+            batched_oracle, function_oracle_values = evaluation
+            polygons = candidate_polygons
+            parameters = candidate_parameters
+            dimension = length(first(parameters))
+            effective_strategy = candidate_strategy
+            break
+        end
+
+        batched_oracle === nothing && error("Function oracle must be either batched, f(points) -> values, or single-point, f(x) / f(x, y) -> value.")
 
         VSD = new()
-        function_oracle_on_many_parameters(parameters) = map(p -> function_oracle(p...), parameters)
-        VSD.function_oracle = function_oracle
+        VSD.function_oracle = batched_oracle
+        VSD.dimension = dimension
+        VSD.strategy = effective_strategy
 
-        # Generate initial mesh
-        (polygons, parameters) = mesh_function(; xlims=xlims, ylims=ylims, resolution=resolution, kwargs...)
-
-        # Evaluate function oracle for all points in the initial mesh
-        function_oracle_values = function_oracle_on_many_parameters(parameters)
         length(function_oracle_values) != length(parameters) && error("Did not evaluate at each parameter")
 
         # Create function cache
-        function_cache = Vector{Tuple{Vector{Float64},Any}}([])
+        function_cache = FunctionCache()
         for i in eachindex(function_oracle_values)
             push!(function_cache, (parameters[i], function_oracle_values[i]))
         end
         VSD.function_cache = function_cache
-        VSD.complete_polygons = Vector{Vector{Int64}}([])
-        VSD.incomplete_polygons = Vector{Vector{Int64}}(polygons)
+        VSD.point_indices = point_index_dict(function_cache)
+        VSD.complete_polygons = PolygonList()
+        VSD.incomplete_polygons = PolygonList(polygons)
 
         # If is_complete was not passed, determine it. 
 
         if haskey(kwargs, :is_complete)
             ic = kwargs[:is_complete]
-            VSD.is_complete =  (p::Vector{Int}, FC:: Vector{Tuple{Vector{Float64},Any}};kwargs...) -> ic(p, FC;kwargs...) # If a custom is_complete function is provided, use it
+            VSD.is_complete =  (p::Vector{Int}, FC::AbstractVector{<:Tuple}; kwargs...) -> ic(p, FC; kwargs...) # If a custom is_complete function is provided, use it
         else
             VSD.is_complete = default_is_complete(function_cache)
         end
@@ -315,6 +384,7 @@ end
 
 function_oracle(VSD::ValuedSubdivision) = VSD.function_oracle
 function_cache(VSD::ValuedSubdivision) = VSD.function_cache
+point_indices(VSD::ValuedSubdivision) = VSD.point_indices
 """
     complete_polygons(VSD::ValuedSubdivision)
 
@@ -328,8 +398,8 @@ complete_polygons(VSD::ValuedSubdivision) = VSD.complete_polygons
     A vector of vectors, each containing indices of the function_cache that represent incomplete polygons.
 """
 incomplete_polygons(VSD::ValuedSubdivision) = VSD.incomplete_polygons
-input_points(FC::Vector{Tuple{Vector{Float64}, Any}}) = getindex.(FC, 1)
-output_values(FC::Vector{Tuple{Vector{Float64}, Any}}) = getindex.(FC, 2)
+input_points(FC::AbstractVector{<:Tuple}) = getindex.(FC, 1)
+output_values(FC::AbstractVector{<:Tuple}) = getindex.(FC, 2)
 
 """
     input_points(VSD::ValuedSubdivision)
@@ -350,7 +420,44 @@ function is_complete(polygon::Vector{Int}, VSD::ValuedSubdivision; kwargs...)
     VSD.is_complete(polygon, function_cache(VSD); kwargs...)
 end
 
-dimension(VSD::ValuedSubdivision) = length(methods(function_oracle(VSD))[1].sig.parameters) - 1
+dimension(VSD::ValuedSubdivision) = VSD.dimension
+strategy(VSD::ValuedSubdivision) = VSD.strategy
+
+function find_point_index(VSD::ValuedSubdivision, point::AbstractVector)
+    return get(point_indices(VSD), point_key(point), nothing)
+end
+
+function point_indices_for_polygon(VSD::ValuedSubdivision, polygon_points::AbstractVector)
+    polygon = Polygon()
+    for point in polygon_points
+        index = find_point_index(VSD, point)
+        index === nothing && error("Point $point not found in function cache.")
+        push!(polygon, index)
+    end
+    return polygon
+end
+
+function set_function_cache!(VSD::ValuedSubdivision, FC::FunctionCache)
+    VSD.function_cache = FC
+    VSD.point_indices = point_index_dict(FC)
+    return VSD
+end
+
+function current_polygon_arity(VSD::ValuedSubdivision)
+    polygon_list = !isempty(incomplete_polygons(VSD)) ? incomplete_polygons(VSD) : complete_polygons(VSD)
+    isempty(polygon_list) && error("Cannot infer refinement strategy from an empty subdivision.")
+    arities = unique(length.(polygon_list))
+    length(arities) == 1 || error("Cannot infer refinement strategy from mixed polygon arities: $arities.")
+    return first(arities)
+end
+
+function default_refinement_strategy(VSD::ValuedSubdivision)
+    n = current_polygon_arity(VSD)
+    n == 4 && return :quadtree
+    n == 3 && return :sierpinski
+    n == 2 && return :onedimensional
+    error("Cannot infer refinement strategy from polygons with $n vertices.")
+end
 
 #==============================================================================#
 # POLYGON MANAGEMENT
@@ -358,45 +465,55 @@ dimension(VSD::ValuedSubdivision) = length(methods(function_oracle(VSD))[1].sig.
 
 function delete_from_incomplete_polygons!(VSD::ValuedSubdivision, P::Vector{Int64}; kwargs...)
     polygon_index = findfirst(x -> x == P, incomplete_polygons(VSD))
-    if polygon_index !== nothing
-        deleteat!(VSD.incomplete_polygons, polygon_index)
-    else
-        error("Polygon not found in IncompletePolygons!")
-    end
+    polygon_index === nothing && error("Polygon not found in IncompletePolygons!")
+    deleteat!(VSD.incomplete_polygons, polygon_index)
 end
 
-function push_to_complete_polygons!(VSD::ValuedSubdivision, P::Vector{Int64}; kwargs...)
-    push!(VSD.complete_polygons, P)
+function delete_from_polygons!(VSD::ValuedSubdivision, P::Vector{Int64})
+    polygon_index = findfirst(==(P), incomplete_polygons(VSD))
+    if polygon_index !== nothing
+        return deleteat!(VSD.incomplete_polygons, polygon_index)
+    end
+    polygon_index = findfirst(==(P), complete_polygons(VSD))
+    polygon_index === nothing && error("Polygon not found in ValuedSubdivision!")
+    deleteat!(VSD.complete_polygons, polygon_index)
 end
 
 function check_completeness!(VSD::ValuedSubdivision; kwargs...)
-    # Check if the current polygons are complete
-    complete_bucket = []
+    complete_bucket = PolygonList()
+    incomplete_bucket = PolygonList()
     for p in incomplete_polygons(VSD)
-        if is_complete(p, VSD; kwargs...)
-            push!(complete_bucket, p)
-        end
+        push!(is_complete(p, VSD; kwargs...) ? complete_bucket : incomplete_bucket, p)
     end
-    for p in complete_bucket
-        delete_from_incomplete_polygons!(VSD, p)
-        push_to_complete_polygons!(VSD, p)
-    end
+    append!(VSD.complete_polygons, complete_bucket)
+    VSD.incomplete_polygons = incomplete_bucket
+    return VSD
 end
 
-function set_complete_polygons!(VSD::ValuedSubdivision, P::Vector{Vector{Int64}})
-    VSD.complete_polygons = P
-end
+set_complete_polygons!(VSD::ValuedSubdivision, P::Vector{Vector{Int64}}) = (VSD.complete_polygons = P)
+set_incomplete_polygons!(VSD::ValuedSubdivision, P::Vector{Vector{Int64}}) = (VSD.incomplete_polygons = P)
+push_to_complete_polygons!(VSD::ValuedSubdivision, P::Vector{Int64}; kwargs...) = push!(VSD.complete_polygons, P)
+push_to_incomplete_polygons!(VSD::ValuedSubdivision, P::Vector{Int64}; kwargs...) = push!(VSD.incomplete_polygons, P)
 
-function set_incomplete_polygons!(VSD::ValuedSubdivision, P::Vector{Vector{Int64}})
-    VSD.incomplete_polygons = P
-end
-
-function push_to_incomplete_polygons!(VSD::ValuedSubdivision, P::Vector{Int64}; kwargs...)
-    push!(VSD.incomplete_polygons, P)
-end
+refinement_polygons(VSD::ValuedSubdivision, refine_complete::Bool) =
+    refine_complete ? vcat(incomplete_polygons(VSD), complete_polygons(VSD)) : incomplete_polygons(VSD)
 
 function push_to_function_cache!(VSD::ValuedSubdivision, V::Tuple{Vector{Float64},Any}; kwargs...)
+    key = point_key(V[1])
+    existing_index = get(point_indices(VSD), key, nothing)
+    existing_index !== nothing && return existing_index
     push!(VSD.function_cache, V)
+    index = length(function_cache(VSD))
+    VSD.point_indices[key] = index
+    return index
+end
+
+function evaluate_and_cache!(VSD::ValuedSubdivision, parameters::Vector{Vector{Float64}})
+    values = function_oracle(VSD)(parameters)
+    length(values) != length(parameters) && error("Did not evaluate at each parameter")
+    for i in eachindex(values)
+        push_to_function_cache!(VSD, (parameters[i], values[i]))
+    end
 end
 
 #==============================================================================#
@@ -415,52 +532,54 @@ function area_of_polygon(P::Vector{Vector{Float64}})::Float64
     return 0.5 * abs(area)
 end
 
-function refine_once!(VSD::ValuedSubdivision, resolution::Int64, local_refinement_method::Function)
-    FO(parameters) = map(p -> function_oracle(VSD)(p...), parameters)
-    refined_polygons::Vector{Vector{Int64}} = []
+function uncached_refinement_points(VSD::ValuedSubdivision, new_params, queued_parameter_keys)
+    candidate_new_params = Vector{Vector{Float64}}()
+    candidate_keys = Set{Tuple}()
+    for p in new_params
+        key = point_key(p)
+        if !haskey(point_indices(VSD), key) && !(key in queued_parameter_keys) && !(key in candidate_keys)
+            push!(candidate_new_params, p)
+            push!(candidate_keys, key)
+        end
+    end
+    return candidate_new_params, candidate_keys
+end
+
+function refine_once!(VSD::ValuedSubdivision, resolution::Int64, local_refinement_method::Function; refine_complete=false)
+    refined_polygons = PolygonList()
     polygons_to_evaluate_and_sort::Vector{Vector{Vector{Float64}}} = []
     new_parameters_to_evaluate::Vector{Vector{Float64}} = []
+    queued_parameter_keys = Set{Tuple}()
     resolution_used = 0
 
-    IP = []
-    if dimension(VSD) == 1
-        IP = sort(incomplete_polygons(VSD), by = x -> abs((function_cache(VSD)[x[1]][1] - function_cache(VSD)[x[2]][1])[1]), rev = true)
-    else
-        IP = sort(incomplete_polygons(VSD), by = x -> area_of_polygon([function_cache(VSD)[v][1] for v in x]), rev = true)
-    end
+    IP = dimension(VSD) == 1 ?
+        sort(refinement_polygons(VSD, refine_complete), by = x -> abs((function_cache(VSD)[x[1]][1] - function_cache(VSD)[x[2]][1])[1]), rev = true) :
+        sort(refinement_polygons(VSD, refine_complete), by = x -> area_of_polygon([function_cache(VSD)[v][1] for v in x]), rev = true)
 
     for P in IP
         P_parameters = [function_cache(VSD)[v][1] for v in P]
         new_params, new_polygons = local_refinement_method(P_parameters)
-        polygon_has_new_points = false
-        for p in new_params
-            if !(p in new_parameters_to_evaluate) && !(p in input_points(VSD))
-                push!(new_parameters_to_evaluate, p)
-                resolution_used += 1
-                polygon_has_new_points = true
-            end
-        end
-        if polygon_has_new_points
-            push!(refined_polygons, P)
-            push!(polygons_to_evaluate_and_sort, new_polygons...)
-        end
+        candidate_new_params, candidate_keys = uncached_refinement_points(VSD, new_params, queued_parameter_keys)
+        isempty(candidate_new_params) && continue
+
+        append!(new_parameters_to_evaluate, candidate_new_params)
+        union!(queued_parameter_keys, candidate_keys)
+        resolution_used += length(candidate_new_params)
+        push!(refined_polygons, P)
+        push!(polygons_to_evaluate_and_sort, new_polygons...)
         resolution_used >= resolution && break
     end
 
     resolution_used == 0 && return 0
 
     for P in refined_polygons
-        delete_from_incomplete_polygons!(VSD, P)
+        refine_complete ? delete_from_polygons!(VSD, P) : delete_from_incomplete_polygons!(VSD, P)
     end
 
-    function_oracle_values = FO(new_parameters_to_evaluate)
-    length(function_oracle_values) != length(new_parameters_to_evaluate) && error("Did not evaluate at each parameter")
-    for i in eachindex(function_oracle_values)
-         push_to_function_cache!(VSD, (new_parameters_to_evaluate[i], (function_oracle_values[i])))
-    end
+    evaluate_and_cache!(VSD, new_parameters_to_evaluate)
 
     for P in polygons_to_evaluate_and_sort
-        polygon = [findfirst(x->x[1]==y, function_cache(VSD)) for y in P]
+        polygon = point_indices_for_polygon(VSD, P)
         push_to_incomplete_polygons!(VSD, polygon)
     end
 
@@ -468,29 +587,75 @@ function refine_once!(VSD::ValuedSubdivision, resolution::Int64, local_refinemen
     return resolution_used
 end
 
+function add_refinement_points_once!(VSD::ValuedSubdivision, resolution::Int64, local_refinement_method::Function; refine_complete=false)
+    new_parameters_to_evaluate::Vector{Vector{Float64}} = []
+    queued_parameter_keys = Set{Tuple}()
+    resolution_used = 0
+
+    IP = sort(refinement_polygons(VSD, refine_complete), by = x -> area_of_polygon([function_cache(VSD)[v][1] for v in x]), rev = true)
+
+    for P in IP
+        P_parameters = [function_cache(VSD)[v][1] for v in P]
+        new_params, _ = local_refinement_method(P_parameters)
+        candidate_new_params, candidate_keys = uncached_refinement_points(VSD, new_params, queued_parameter_keys)
+        isempty(candidate_new_params) && continue
+
+        append!(new_parameters_to_evaluate, candidate_new_params)
+        union!(queued_parameter_keys, candidate_keys)
+        resolution_used += length(candidate_new_params)
+        resolution_used >= resolution && break
+    end
+
+    resolution_used == 0 && return 0
+
+    evaluate_and_cache!(VSD, new_parameters_to_evaluate)
+
+    return resolution_used
+end
+
 function refine!(VSD::ValuedSubdivision, resolution::Int64;	strategy = nothing, kwargs...)
     if strategy === nothing
-        n = length(complete_polygons(VSD)[1])
-        strategy = n == 4 ? :quadtree : n == 3 ? :careful : n == 2 ? :onedimensional : strategy
+        strategy = default_refinement_strategy(VSD)
     end
 
-    if in(strategy, collect(keys(VISUALIZATION_STRATEGIES))) == false
+    if !haskey(VISUALIZATION_STRATEGIES, strategy)
         error("Invalid strategy inputted. Valid strategies include:",keys(VISUALIZATION_STRATEGIES),".")
     end
+    if dimension(VSD) == 1 && strategy != :onedimensional
+        error("One-dimensional subdivisions must use the :onedimensional strategy.")
+    elseif dimension(VSD) > 1 && strategy == :onedimensional
+        error("Two-dimensional subdivisions cannot use the :onedimensional strategy.")
+    end
+    VSD.strategy = strategy
 
     local_refinement_method = get(kwargs, :refinement_method, VISUALIZATION_STRATEGIES[strategy][:refinement_method])
+    refine_complete = get(kwargs, :refine_complete, false)
 
     if strategy == :careful && dimension(VSD) > 1
         delaunay_retriangulate!(VSD)
     end
 
+    expected_arity = strategy == :quadtree ? 4 : strategy == :onedimensional ? 2 : 3
+    actual_arity = current_polygon_arity(VSD)
+    actual_arity == expected_arity || error("Strategy $strategy cannot refine polygons with $actual_arity vertices.")
+
     total_resolution_used = 0
     remaining = resolution
-    while remaining > 0
-        used_this_pass = refine_once!(VSD, remaining, local_refinement_method)
-        used_this_pass == 0 && break
-        total_resolution_used += used_this_pass
-        remaining = resolution - total_resolution_used
+    if strategy == :careful && dimension(VSD) > 1
+        while remaining > 0
+            used_this_pass = add_refinement_points_once!(VSD, remaining, local_refinement_method; refine_complete=refine_complete)
+            used_this_pass == 0 && break
+            delaunay_retriangulate!(VSD)
+            total_resolution_used += used_this_pass
+            remaining = resolution - total_resolution_used
+        end
+    else
+        while remaining > 0
+            used_this_pass = refine_once!(VSD, remaining, local_refinement_method; refine_complete=refine_complete)
+            used_this_pass == 0 && break
+            total_resolution_used += used_this_pass
+            remaining = resolution - total_resolution_used
+        end
     end
 
     println("Resolution used:", total_resolution_used)
@@ -500,11 +665,12 @@ end
 """
     refine!(VSD::ValuedSubdivision; kwargs...)
 
-    Refines a ValuedSubdivision via incomplete polygon subdivision.
+    Refines a ValuedSubdivision by adding samples to incomplete polygons.
+    Local strategies replace refined polygons directly; `:careful` adds the chosen samples and then rebuilds the global Delaunay triangulation.
     
     # Keyword Arguments
         - `resolution`: An upper bound on the number of new points to be added to the subdivision during refinement (default is 1000000).
-        - `strategy`: The refinement strategy to be used (default is :sierpinski in the case that the subdivision is triangular and :quadtree in the case that the subdivision is rectangular).
+        - `strategy`: The refinement strategy to be used. If omitted, the strategy is inferred from the current mesh: `:quadtree` for quadrilaterals, `:sierpinski` for triangles, and `:onedimensional` for segments.
     
     # Example
     julia> f(x,y) = x + y
@@ -529,28 +695,29 @@ end
     This function ensures that the triangulation does not contain duplicate points and updates the polygons accordingly.
 """
 function delaunay_retriangulate!(VSD::ValuedSubdivision)
+    dimension(VSD) == 2 || error("Delaunay retriangulation is only defined for 2D subdivisions.")
     println("Delaunay re-triangulating the mesh...")
-    vertices = []
+    vertices = Vector{Vector{Float64}}()
+    seen = Set{Tuple}()
     for v in function_cache(VSD)
-        v[1] in vertices || push!(vertices, v[1]) #ensuring that the triangulation will not contain duplicate points and the package won't give that annoying warning
+        key = point_key(v[1])
+        if !(key in seen)
+            push!(vertices, v[1]) #ensuring that the triangulation will not contain duplicate points and the package won't give that annoying warning
+            push!(seen, key)
+        end
     end
+    length(vertices) >= 3 || error("At least three unique points are required for Delaunay retriangulation.")
     vertices = hcat(vertices...)
     tri = triangulate(vertices) #This comes from DelaunayTriangulation.jl
     triangle_iterator = each_solid_triangle(tri) #Also from DelaunayTriangulation.jl
-    triangles::Vector{Vector{Int64}} = []
+    triangles = PolygonList()
     for T in triangle_iterator
         i,j,k = triangle_vertices(T)
         i,j,k = get_point(tri, i, j, k)
-        vertex_1 = [i[1], i[2]]
-        vertex_2 = [j[1], j[2]]
-        vertex_3 = [k[1], k[2]]
-        index_1 = findfirst(x->x[1] == vertex_1, function_cache(VSD))
-        index_2 = findfirst(x->x[1] == vertex_2, function_cache(VSD))
-        index_3 = findfirst(x->x[1] == vertex_3, function_cache(VSD))
-        triangle = [index_1,index_2,index_3]
+        triangle = point_indices_for_polygon(VSD, [[i[1], i[2]], [j[1], j[2]], [k[1], k[2]]])
         push!(triangles, triangle)
     end
-    set_complete_polygons!(VSD, Vector{Vector{Int64}}([])) 
+    set_complete_polygons!(VSD, PolygonList())
     set_incomplete_polygons!(VSD, triangles)
     check_completeness!(VSD)
     return VSD
@@ -560,12 +727,7 @@ end
 # UTILITY FUNCTIONS
 #==============================================================================#
 
-function midpoint(P::AbstractVector) 
-    if length(P) == 0
-        return nothing
-    end
-    return((sum(P))./length(P))
-end
+midpoint(P::AbstractVector) = isempty(P) ? nothing : sum(P) ./ length(P)
 
 mean(P::Vector{T}) where T <: Any = midpoint(P)
 
@@ -585,18 +747,202 @@ end
 # VISUALIZATION FUNCTIONS
 #==============================================================================#
 
+function finite_color_range(values::AbstractVector{<:Real})
+    lo, hi = extrema(values)
+    if lo == hi
+        pad = max(abs(lo), 1.0) / 2
+        return (lo - pad, hi + pad)
+    end
+    return (lo, hi)
+end
+
+function finite_color_range_or_default(values)
+    finite_values = filter(isfinite, values)
+    return isempty(finite_values) ? (0.0, 1.0) : finite_color_range(finite_values)
+end
+
+function finite_unique_values(values)
+    return sort(unique(filter(isfinite, Float64.(values))))
+end
+
+function value_label(value::Real)
+    return value == round(value) ? string(Int(round(value))) : string(value)
+end
+
+function categorical_palette(n::Integer)
+    base_colors = GLMakie.Makie.wong_colors()
+    if n <= length(base_colors)
+        return base_colors[1:n]
+    end
+
+    extra_colors = map(GLMakie.Makie.to_color, [:purple, :brown, :pink, :gray, :olive, :cyan])
+    colors = vcat(base_colors, extra_colors)
+    while length(colors) < n
+        append!(colors, colors)
+    end
+    return colors[1:n]
+end
+
+function categorical_color_vector(values, categories, category_colors; missing_color=GLMakie.RGBAf(1, 1, 1, 1))
+    color_map = Dict(value => color for (value, color) in zip(categories, category_colors))
+    return [isfinite(value) ? color_map[value] : missing_color for value in values]
+end
+
+function should_use_discrete_legend(values; legend_max_values=DEFAULT_DISCRETE_LEGEND_LIMIT, discrete_legend=nothing)
+    categories = finite_unique_values(values)
+    use_legend = discrete_legend === nothing ? 0 < length(categories) <= legend_max_values : discrete_legend
+    return use_legend, categories
+end
+
+function add_value_legend!(fig, elements, labels, title)
+    isempty(elements) && return nothing
+    return GLMakie.Legend(fig[1, 1], elements, labels, title;
+        tellwidth=false, tellheight=false, halign=:right, valign=:top,
+        margin=(10, 10, 10, 10))
+end
+
+function numeric_mean_or_nothing(values)
+    numeric_values = Float64[]
+    for value in values
+        is_real_value(value) && push!(numeric_values, Float64(value))
+    end
+    isempty(numeric_values) && return nothing
+    return sum(numeric_values) / length(numeric_values)
+end
+
+function polygon_plot_value(VSD::ValuedSubdivision, polygon::Vector{Int}; plot_log_transform=false)
+    value = numeric_mean_or_nothing(map(last, function_cache(VSD)[polygon]))
+    value === nothing && return nothing
+    if plot_log_transform
+        value <= -1 && return nothing
+        value = log(value + 1)
+    end
+    return isfinite(value) ? value : nothing
+end
+
+function coordinate_limits(VSD::ValuedSubdivision, coordinate::Int)
+    values = map(x -> x[1][coordinate], function_cache(VSD))
+    return [minimum(values), maximum(values)]
+end
+
+function value_limits(values::AbstractVector{<:Real})
+    lo, hi = extrema(values)
+    if lo == hi
+        pad = max(abs(lo), 1.0) / 2
+        return [lo - pad, hi + pad]
+    end
+    pad = (hi - lo) / 20
+    return [lo - pad, hi + pad]
+end
+
+function selected_polygons(VSD::ValuedSubdivision, plot_all_polygons::Bool)
+    if plot_all_polygons || isempty(complete_polygons(VSD))
+        return vcat(complete_polygons(VSD), incomplete_polygons(VSD))
+    end
+    return complete_polygons(VSD)
+end
+
+function polygon_mesh_data(VSD::ValuedSubdivision, polygon_list::PolygonList, polygon_values)
+    valid_polygons = [(P, value) for (P, value) in zip(polygon_list, polygon_values) if length(P) >= 3]
+    total_vertices = sum(length(first(item)) for item in valid_polygons; init=0)
+    total_faces = sum(length(first(item)) - 2 for item in valid_polygons; init=0)
+
+    vertices = Matrix{Float64}(undef, total_vertices, 2)
+    faces = Matrix{Int64}(undef, total_faces, 3)
+    colors = fill(NaN, total_vertices)
+
+    vertex_offset = 0
+    face_index = 1
+    for (polygon, value) in valid_polygons
+        color_value = value === nothing ? NaN : value
+        for (local_index, vertex_index) in pairs(polygon)
+            point = function_cache(VSD)[vertex_index][1]
+            row = vertex_offset + local_index
+            vertices[row, 1] = point[1]
+            vertices[row, 2] = point[2]
+            colors[row] = color_value
+        end
+        for local_index in 2:(length(polygon) - 1)
+            faces[face_index, 1] = vertex_offset + 1
+            faces[face_index, 2] = vertex_offset + local_index
+            faces[face_index, 3] = vertex_offset + local_index + 1
+            face_index += 1
+        end
+        vertex_offset += length(polygon)
+    end
+
+    return vertices, faces, colors
+end
+
+function polygon_mesh_data(VSD::ValuedSubdivision; plot_all_polygons::Bool, plot_log_transform::Bool)
+    polygon_list = selected_polygons(VSD, plot_all_polygons)
+    polygon_values = [polygon_plot_value(VSD, P; plot_log_transform=plot_log_transform) for P in polygon_list]
+    return polygon_mesh_data(VSD, polygon_list, polygon_values)
+end
+
 """
     visualize_function_cache(VSD::ValuedSubdivision)
 
     Visualizes the function cache of a ValuedSubdivision by scatter plotting the input points and their corresponding output values.
     This function is useful for quickly visualizing the cached values without needing to create a full subdivision visualization.
 """
-function visualize_function_cache(VSD::ValuedSubdivision)
-    visualize(function_cache(VSD))
+function visualize_function_cache(VSD::ValuedSubdivision; kwargs...)
+    visualize(function_cache(VSD); kwargs...)
 end
-function visualize(FC::Vector{Tuple{Vector{Float64},Any}})
-    scatter(first.(input_points(FC)), last.(input_points(FC)), 
-    zcolor = map(x->isa(x,Number) ? x : -10.0, output_values(FC)), legend = false, colorbar = true)
+
+function visualize(FC::AbstractVector{<:Tuple}; kwargs...)
+    fig = GLMakie.Figure()
+    isempty(FC) && return fig
+
+    dim = length(first(input_points(FC)))
+    values = map(x -> is_real_value(x) ? Float64(x) : NaN, output_values(FC))
+    numeric_values = filter(isfinite, values)
+    colormap = get(kwargs, :colormap, :thermal)
+    legend_max_values = get(kwargs, :legend_max_values, DEFAULT_DISCRETE_LEGEND_LIMIT)
+    discrete_legend = get(kwargs, :discrete_legend, nothing)
+    legend_title = get(kwargs, :legend_title, "value")
+    use_discrete_legend, categories = should_use_discrete_legend(values; legend_max_values=legend_max_values, discrete_legend=discrete_legend)
+
+    if dim == 1
+        xs = map(first, input_points(FC))
+        ys = isempty(numeric_values) ? zeros(length(xs)) : values
+        ax = GLMakie.Axis(fig[1, 1]; xlabel="x", ylabel="f(x)")
+        if isempty(numeric_values)
+            GLMakie.scatter!(ax, xs, ys; color=:black)
+        elseif use_discrete_legend
+            category_colors = categorical_palette(length(categories))
+            colors = categorical_color_vector(values, categories, category_colors)
+            GLMakie.scatter!(ax, xs, ys; color=colors)
+            elements = [GLMakie.MarkerElement(color=color, marker=:circle) for color in category_colors]
+            labels = value_label.(categories)
+            add_value_legend!(fig, elements, labels, legend_title)
+        else
+            colorrange = finite_color_range(numeric_values)
+            plt = GLMakie.scatter!(ax, xs, ys; color=values, colormap=colormap, colorrange=colorrange, nan_color=:white)
+            GLMakie.Colorbar(fig[1, 2], plt)
+        end
+    else
+        points = input_points(FC)
+        xs = map(p -> p[1], points)
+        ys = map(p -> p[2], points)
+        ax = GLMakie.Axis(fig[1, 1]; xlabel="x", ylabel="y", aspect=GLMakie.DataAspect(), backgroundcolor=:black)
+        if isempty(numeric_values)
+            GLMakie.scatter!(ax, xs, ys; color=:white)
+        elseif use_discrete_legend
+            category_colors = categorical_palette(length(categories))
+            colors = categorical_color_vector(values, categories, category_colors)
+            GLMakie.scatter!(ax, xs, ys; color=colors)
+            elements = [GLMakie.MarkerElement(color=color, marker=:circle) for color in category_colors]
+            labels = value_label.(categories)
+            add_value_legend!(fig, elements, labels, legend_title)
+        else
+            colorrange = finite_color_range(numeric_values)
+            plt = GLMakie.scatter!(ax, xs, ys; color=values, colormap=colormap, colorrange=colorrange, nan_color=:white)
+            GLMakie.Colorbar(fig[1, 2], plt)
+        end
+    end
+
+    return fig
 end
 
 """
@@ -607,92 +953,127 @@ end
         -`ylims`,
         -`plot_log_transform` (default is false),
         -`plot_all_polygons` (default is false in the case that function oracle is discrete, true otherwise)
+        -`legend_max_values` (default is 10),
+        -`discrete_legend` (default is automatic; set false to force a colorbar)
 """
-function visualize(VSD::ValuedSubdivision; kwargs...) :: Plots.Plot
-    xl = get(kwargs, :xlims, [min(map(x->x[1][1],function_cache(VSD))...),max(map(x->x[1][1],function_cache(VSD))...)])
-    yl = []
-    MyPlot = []
+function visualize(VSD::ValuedSubdivision; kwargs...) :: GLMakie.Figure
+    xl = get(kwargs, :xlims, coordinate_limits(VSD, 1))
     plot_log_transform = get(kwargs, :plot_log_transform, false)
-    plot_all_polygons = get(kwargs, :plot_all_polygons, is_discrete(VSD) == false)
+    plot_all_polygons = get(kwargs, :plot_all_polygons, !is_discrete(VSD))
+    colormap = get(kwargs, :colormap, :thermal)
+    legend_max_values = get(kwargs, :legend_max_values, DEFAULT_DISCRETE_LEGEND_LIMIT)
+    discrete_legend = get(kwargs, :discrete_legend, nothing)
+    legend_title = get(kwargs, :legend_title, "value")
 
     if dimension(VSD) > 1
-        yl = get(kwargs, :ylims, [min(map(x->x[1][2],function_cache(VSD))...),max(map(x->x[1][2],function_cache(VSD))...)])
-        MyPlot = plot(xlims = xl, ylims = yl, aspect_ratio = :equal, background_color_inside=:black; kwargs...)
-    else
-        sorted_values = sort(output_values(VSD))
-        yl = [sorted_values[1] - 1, sorted_values[end] + 1]
-        MyPlot = plot(xlims = xl, ylims = yl, background_color_inside = :white; kwargs...)
-    end
-    
-    polygon_list = plot_all_polygons == true ? vcat(complete_polygons(VSD), incomplete_polygons(VSD)) : complete_polygons(VSD)
-    polygons_to_draw = map(P->map(first,function_cache(VSD)[P]), polygon_list)
-    # we remove non-numbers when computing means so that non-numbers function as wild cards essentially 
-    polygon_values = map(P-> mean(filter(x->isa(x,Number),map(last,function_cache(VSD)[P]))), polygon_list)
-    if plot_log_transform
-        # If we are plotting log transformed values, we need to transform the polygon values
-        polygon_values = map(x->x==nothing ? nothing : log(x+1), polygon_values)
-    end
-    # It is still possible that the mean returns 'nothing' if all values are non-numbers
-    real_values = filter(x->x!=nothing, unique(polygon_values))
-    max_value = max(real_values...)
-    shapes = Shape[]
-    colors = []
-    
-    if dimension(VSD) > 1
-        for (poly_pts, value) in zip(polygons_to_draw, polygon_values)
-            push!(shapes, Shape([(t[1], t[2]) for t in poly_pts]))
-            push!(colors, value==nothing ? :white : cgrad(:thermal, rev=false)[value/max_value])
-        end
-        MyPlot = plot!(shapes; fillcolor=permutedims(colors), linecolor=permutedims(colors), linewidth=0, label = false)
-        legend_values = sort(real_values, rev=true)
-        if in(nothing,polygon_values)
-            pushfirst!(legend_values, nothing)
-        end
-        if length(legend_values) <= 10
-            # Add legend entries for unique values
-            for val in legend_values
-                color = val==nothing ? :white : cgrad(:thermal, rev=false)[val/max_value]
-                # Plot an invisible shape with the correct color and label for the legend
-                plot!(Shape([(NaN, NaN), (NaN, NaN), (NaN, NaN)]); fillcolor=color, linecolor=:transparent, linewidth=0, label="$val", legend = :outerright)
+        yl = get(kwargs, :ylims, coordinate_limits(VSD, 2))
+        fig = GLMakie.Figure()
+        ax = GLMakie.Axis(fig[1, 1]; xlabel="x", ylabel="y", aspect=GLMakie.DataAspect(), backgroundcolor=:black)
+        GLMakie.xlims!(ax, xl[1], xl[2])
+        GLMakie.ylims!(ax, yl[1], yl[2])
+
+        polygon_list = selected_polygons(VSD, plot_all_polygons)
+        polygon_values = [polygon_plot_value(VSD, P; plot_log_transform=plot_log_transform) for P in polygon_list]
+        vertices, faces, colors = polygon_mesh_data(VSD, polygon_list, polygon_values)
+        numeric_values = filter(isfinite, colors)
+
+        if size(faces, 1) > 0
+            if isempty(numeric_values)
+                GLMakie.mesh!(ax, vertices, faces; color=:white, shading=false)
+            else
+                use_discrete_legend, categories = should_use_discrete_legend(colors; legend_max_values=legend_max_values, discrete_legend=discrete_legend)
+                if use_discrete_legend
+                    category_colors = categorical_palette(length(categories))
+                    mesh_colors = categorical_color_vector(colors, categories, category_colors)
+                    GLMakie.mesh!(ax, vertices, faces; color=mesh_colors, shading=false)
+                    elements = [GLMakie.PolyElement(color=color, strokecolor=color) for color in category_colors]
+                    labels = value_label.(categories)
+                    add_value_legend!(fig, elements, labels, legend_title)
+                else
+                    colorrange = finite_color_range(numeric_values)
+                    plt = GLMakie.mesh!(ax, vertices, faces; color=colors, colormap=colormap, colorrange=colorrange, nan_color=:white, shading=false)
+                    GLMakie.Colorbar(fig[1, 2], plt)
+                end
             end
-        else
-            # Add a colorbar for the continuous values
-            scatter!([NaN], [NaN]; zcolor = [min(real_values...), max(real_values...)], color = cgrad(:thermal, rev = false), markersize = 0, colorbar = true, label = false)
         end
-    else
-        for (poly_pts, value) in zip(polygons_to_draw, polygon_values)
-            plot!([poly_pts[1][1], poly_pts[2][1]], [value, value], linecolor =:white, linewidth=2, label = false)
-        end
-    end
 
-    return(MyPlot)
+        return fig
+    else
+        polygon_list = selected_polygons(VSD, plot_all_polygons)
+        polygon_values = [polygon_plot_value(VSD, P; plot_log_transform=plot_log_transform) for P in polygon_list]
+        numeric_values = Float64[value for value in polygon_values if value !== nothing]
+        yl = get(kwargs, :ylims, isempty(numeric_values) ? [0.0, 1.0] : value_limits(numeric_values))
+
+        fig = GLMakie.Figure()
+        ax = GLMakie.Axis(fig[1, 1]; xlabel="x", ylabel="f(x)")
+        GLMakie.xlims!(ax, xl[1], xl[2])
+        GLMakie.ylims!(ax, yl[1], yl[2])
+
+        segment_points = GLMakie.Point2f[]
+        segment_colors = Float64[]
+        for (polygon, value) in zip(polygon_list, polygon_values)
+            value === nothing && continue
+            length(polygon) == 2 || continue
+            p1 = function_cache(VSD)[polygon[1]][1]
+            p2 = function_cache(VSD)[polygon[2]][1]
+            push!(segment_points, GLMakie.Point2f(p1[1], value))
+            push!(segment_points, GLMakie.Point2f(p2[1], value))
+            push!(segment_colors, value, value)
+        end
+
+        if !isempty(segment_points)
+            use_discrete_legend, categories = should_use_discrete_legend(segment_colors; legend_max_values=legend_max_values, discrete_legend=discrete_legend)
+            if use_discrete_legend
+                category_colors = categorical_palette(length(categories))
+                colors = categorical_color_vector(segment_colors, categories, category_colors)
+                GLMakie.linesegments!(ax, segment_points; color=colors, linewidth=2)
+                elements = [GLMakie.LineElement(color=color, linewidth=2) for color in category_colors]
+                labels = value_label.(categories)
+                add_value_legend!(fig, elements, labels, legend_title)
+            else
+                colorrange = finite_color_range(segment_colors)
+                plt = GLMakie.linesegments!(ax, segment_points; color=segment_colors, colormap=colormap, colorrange=colorrange, linewidth=2)
+                GLMakie.Colorbar(fig[1, 2], plt)
+            end
+        end
+
+        return fig
+    end
 end
 
 """
     animate_refinement(VSD::ValuedSubdivision; steps::Int=100, resolution::Int=100, kwargs...)
 
-    Creates an animation of the refinement process of a ValuedSubdivision `VSD`.
-    The animation shows the subdivision being refined step by step, with each step visualized using the `visualize` function.
+    Saves a sequence of GLMakie frames showing the refinement process of a ValuedSubdivision `VSD`.
     The function accepts the following keyword arguments:
     - `steps`: The number of refinement steps to animate (default is 100).
     - `resolution`: The resolution for each refinement step (default is 100).
-    - `kwargs`: Additional keyword arguments to pass to the `visualize` function for customization
+    - `filename`: Base filename for frame output (default is "refinement_animation").
+    - `file_extension`: Frame extension (default is "png").
+    - `kwargs`: Additional keyword arguments to pass to the `visualize` function for customization.
 """
-function animate_refinement(VSD::ValuedSubdivision; steps::Int=100, resolution::Int=100, kwargs...)
-
-    anim = @animate for i in 1:steps
-        refine!(VSD, resolution)
-        visualize(VSD; kwargs...)
+function animate_refinement(VSD::ValuedSubdivision; steps::Int=100, resolution::Int=100, filename::String="refinement_animation", file_extension::String="png", kwargs...)
+    saved_files = String[]
+    base, ext = splitext(filename)
+    if !isempty(ext)
+        filename = base
+        file_extension = replace(ext, "." => "")
     end
-
-    gif(anim, "refinement_animation.gif", fps=10)
+    for i in 1:steps
+        refine!(VSD, resolution)
+        fig = visualize(VSD; kwargs...)
+        frame_filename = "$(filename)_$(lpad(i, 4, '0')).$(file_extension)"
+        GLMakie.save(frame_filename, fig)
+        push!(saved_files, frame_filename)
+    end
+    return saved_files
 end
 
 """
-    save(P::Plot, filename::String)
-Saves a plot `P` to a file with the specified `filename`.
+    save(fig::GLMakie.Figure, filename::String)
+Saves a GLMakie figure `fig` to a file with the specified `filename`.
 """
-function save(P::Plots.Plot, filename::String; file_extension = "png", dpi = 300)
+function save(fig::GLMakie.Figure, filename::String; file_extension = "png", dpi = 300)
     #prepend "OutputFiles/" if it is not already there
     if !startswith(filename, "OutputFiles/")
         filename = "OutputFiles/" * filename
@@ -701,42 +1082,12 @@ function save(P::Plots.Plot, filename::String; file_extension = "png", dpi = 300
     if !endswith(filename, file_extension)
         filename *= "." * file_extension
     end
-    savefig(P, filename)
+    GLMakie.save(filename, fig; px_per_unit=dpi/150)
     println("Plot saved to $filename")
+    return filename
 end
 
-function visualize_with_makie(VSD::ValuedSubdivision; kwargs...)
-    plot_log_transform = get(kwargs, :plot_log_transform, false)
-    plot_all_polygons = get(kwargs, :plot_all_polygons, is_discrete(VSD) == false)
-    
-    polygon_list = plot_all_polygons == true ? vcat(complete_polygons(VSD), incomplete_polygons(VSD)) : complete_polygons(VSD)
-    polygons_to_draw = map(P->map(first,function_cache(VSD)[P]), polygon_list)
-    # we remove non-numbers when computing means so that non-numbers function as wild cards essentially 
-    polygon_values = map(P-> mean(filter(x->isa(x,Number),map(last,function_cache(VSD)[P]))), polygon_list)
-    if plot_log_transform
-        # If we are plotting log transformed values, we need to transform the polygon values
-        polygon_values = map(x->x==nothing ? nothing : log(x+1), polygon_values)
-    end
-    # It is still possible that the mean returns 'nothing' if all values are non-numbers
-    real_values = filter(x->x!=nothing, unique(polygon_values))
-    max_value = max(real_values...)
-    vertices = Array{Float64}(undef, 0, 2)
-    faces = Array{Int}(undef, 0, 3)
-    values = []
-    for (poly_pts, value) in zip(polygons_to_draw, polygon_values)
-        for v in poly_pts
-            vertices = vcat(vertices, [v[1] v[2]])
-            push!(values, value/max_value)
-        end
-        l = Int(size(vertices, 1))
-        faces = vcat(faces, [l-2 l-1 l])
-    end
-    fig = Figure()
-    ax = Axis(fig[1,1]; xlabel="X axis", ylabel="Y axis", title="My Mesh Plot", aspect=DataAspect())
-    mesh!(ax, vertices, faces, color=values, shading=false)
-    #cb = Colorbar(fig[1,2], plt)
-    return fig
-end
+visualize_with_makie(args...; kwargs...) = visualize(args...; kwargs...)
 
 #==============================================================================#
 # VSD WINDOW MODIFICATION FUNCTIONS
@@ -744,6 +1095,7 @@ end
 
 #this function assumes that the VSD is 2-dimensional, I haven't figured it out for a 1-dimensional VSD yet.
 function adjust!(VSD::ValuedSubdivision; kwargs...)
+    dimension(VSD) == 2 || error("adjust! is currently only defined for 2D subdivisions.")
     xl = get(kwargs, :xlims, [min(map(x->x[1][1],function_cache(VSD))...),max(map(x->x[1][1],function_cache(VSD))...)])
     yl = get(kwargs, :ylims, [min(map(x->x[1][2],function_cache(VSD))...),max(map(x->x[1][2],function_cache(VSD))...)])
     resolution = get(kwargs, :resolution, 1000)
@@ -754,24 +1106,36 @@ function adjust!(VSD::ValuedSubdivision; kwargs...)
     end
     FO = function_oracle(VSD)
     FC = function_cache(VSD)
-    function_oracle_on_many_parameters(parameters) = map(p -> FO(p...), parameters)
-    new_function_cache = Vector{Tuple{Vector{Float64},Any}}([])
+    evaluate_oracle_on_points(parameters) = FO(parameters)
+    new_function_cache = FunctionCache()
+    cached_keys = Set{Tuple}()
     for i in FC
         if i[1][1] >= new_xlims[1] && i[1][1] <= new_xlims[2] && i[1][2] >= new_ylims[1] && i[1][2] <= new_ylims[2]
-            push!(new_function_cache, i)
+            key = point_key(i[1])
+            if !(key in cached_keys)
+                push!(new_function_cache, i)
+                push!(cached_keys, key)
+            end
         end
     end
-    x_values, y_values = initial_parameter_distribution(xlims = new_xlims, ylims = new_ylims, resolution = resolution)
+    x_values, y_values = initial_parameter_distribution(; xlims = new_xlims, ylims = new_ylims, resolution = resolution)
     new_parameters = [[x,y] for x in x_values for y in y_values]
-    function_oracle_values = function_oracle_on_many_parameters(new_parameters)
-    length(function_oracle_values) != length(new_parameters) && error("Did not evaluate at each parameter")
-    for i in eachindex(function_oracle_values)
-        push!(new_function_cache, (new_parameters[i], (function_oracle_values[i])))
+    parameters_to_evaluate = Vector{Vector{Float64}}()
+    for p in new_parameters
+        key = point_key(p)
+        if !(key in cached_keys)
+            push!(parameters_to_evaluate, p)
+            push!(cached_keys, key)
+        end
     end
-    VSD.function_cache = new_function_cache
+    function_oracle_values = evaluate_oracle_on_points(parameters_to_evaluate)
+    length(function_oracle_values) != length(parameters_to_evaluate) && error("Did not evaluate at each parameter")
+    for i in eachindex(function_oracle_values)
+        push!(new_function_cache, (parameters_to_evaluate[i], (function_oracle_values[i])))
+    end
+    set_function_cache!(VSD, new_function_cache)
     delaunay_retriangulate!(VSD)
     return VSD
 end
 
 end # module AdaptiveSampling
-
