@@ -127,7 +127,7 @@ function add_refine_button!(
         button_refinement_passes=1,
         navigation_step=0.20,
         zoom_step=0.20,
-        refine_button_min_area_factor=0.95,
+        refine_button_min_area_factor=0.50,
         navigation_initial_resolution=250,
         navigation_refinement_budget=1000,
         verbose=is_verbose(VT),

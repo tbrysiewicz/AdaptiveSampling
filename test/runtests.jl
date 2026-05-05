@@ -98,6 +98,21 @@ using AdaptiveSampling
         @test AdaptiveSampling.scaled_min_refinement_area(VT) == 1.5
     end
 
+    @testset "Stable categorical color value order" begin
+        VT = ValuedTriangulation(points -> [p[1] < 0 ? 5 : 9 for p in points];
+            xlims=[-1, 1],
+            ylims=[-1, 1],
+            initial_resolution=9,
+            verbose=false,
+        )
+
+        order = AdaptiveSampling.stable_plot_value_order!(VT, [5, 9])
+        @test order == [5, 9]
+
+        order = AdaptiveSampling.stable_plot_value_order!(VT, [3, 5])
+        @test order == [5, 9, 3]
+    end
+
     @testset "Invalid strategy" begin
         @test_throws Exception ValuedTriangulation((x, y) -> x + y; strategy=:quadtree, verbose=false)
     end

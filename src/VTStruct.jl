@@ -45,6 +45,7 @@ mutable struct ValuedTriangulation
     xlims::Vector{Float64}
     ylims::Vector{Float64}
     covered_windows::Vector{NTuple{4,Float64}}
+    plot_value_order::Dict{Bool,Vector{Any}}
     verbose::Bool
 end
 

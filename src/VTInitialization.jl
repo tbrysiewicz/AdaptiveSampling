@@ -105,6 +105,7 @@ function ValuedTriangulation(
         xlimits,
         ylimits,
         [(xlimits[1], xlimits[2], ylimits[1], ylimits[2])],
+        Dict{Bool,Vector{Any}}(),
         verbose,
     )
     sync_triangle_completeness!(VT)

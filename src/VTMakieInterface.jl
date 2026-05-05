@@ -16,9 +16,38 @@ function polygon_plot_value(VT::ValuedTriangulation, triangle::Vector{Int64}; pl
     return first(vertex_values)
 end
 
+function cached_plot_value(value; plot_log_transform=false)
+    is_wildcard_value(value) && return nothing
+    if value isa Real
+        if plot_log_transform
+            value <= -1 && return nothing
+            value = log(value + 1)
+        end
+        return isfinite(value) ? value : nothing
+    end
+    return value
+end
+
 function categorical_unique_values_any(values)
     categories = unique(filter(value -> !isnothing(value) && !is_wildcard_value(value), values))
     return sort(categories; by=string)
+end
+
+function append_missing_values!(values::Vector{Any}, candidates)
+    for value in candidates
+        if !isnothing(value) && !is_wildcard_value(value) && !(value in values)
+            push!(values, value)
+        end
+    end
+    return values
+end
+
+function stable_plot_value_order!(VT::ValuedTriangulation, visible_values; plot_log_transform=false)
+    values = get!(VT.plot_value_order, Bool(plot_log_transform), Any[])
+    cached_values = (cached_plot_value(value; plot_log_transform=plot_log_transform) for value in output_values(VT))
+    append_missing_values!(values, cached_values)
+    append_missing_values!(values, visible_values)
+    return values
 end
 
 function should_use_discrete_legend_any(values; legend_max_values=VALUED_TRIANGULATION_DEFAULT_LEGEND_LIMIT, discrete_legend=nothing)
@@ -54,6 +83,19 @@ end
 function numeric_continuous_color_range(values)
     numeric_values = filter(isfinite, values)
     return isempty(numeric_values) ? (0.0, 1.0) : finite_color_range(numeric_values)
+end
+
+function numeric_continuous_color_range(VT::ValuedTriangulation, visible_values; plot_log_transform=false)
+    cached_values = [
+        cached_plot_value(value; plot_log_transform=plot_log_transform)
+        for value in output_values(VT)
+    ]
+    values = [
+        Float64(value)
+        for value in vcat(cached_values, visible_values)
+        if value isa Real && isfinite(value)
+    ]
+    return isempty(values) ? (0.0, 1.0) : finite_color_range(values)
 end
 
 function selected_triangles(VT::ValuedTriangulation, plot_all_triangles::Bool)
@@ -102,12 +144,13 @@ function draw_triangulation!(fig, ax, VT::ValuedTriangulation; kwargs...)
         return (plot=nothing, decorations=decorations)
     end
 
-    categories = categorical_unique_values_any(vertex_values)
-    if isempty(categories)
+    visible_categories = categorical_unique_values_any(vertex_values)
+    if isempty(visible_categories)
         return (plot=GLMakie.mesh!(ax, vertices, faces; color=:black, shading=false), decorations=decorations)
     end
 
-    use_discrete_legend, categories = should_use_discrete_legend_any(vertex_values; legend_max_values=legend_max_values, discrete_legend=discrete_legend)
+    categories = stable_plot_value_order!(VT, vertex_values; plot_log_transform=plot_log_transform)
+    use_discrete_legend = discrete_legend === nothing ? 0 < length(categories) <= legend_max_values : discrete_legend
     if use_discrete_legend
         category_colors = categorical_palette(length(categories))
         color_map = Dict(value => color for (value, color) in zip(categories, category_colors))
@@ -121,7 +164,7 @@ function draw_triangulation!(fig, ax, VT::ValuedTriangulation; kwargs...)
     end
 
     continuous_values = continuous_vertex_values(vertex_values, categories)
-    colorrange = numeric_continuous_color_range(continuous_values)
+    colorrange = numeric_continuous_color_range(VT, vertex_values; plot_log_transform=plot_log_transform)
     plt = GLMakie.mesh!(ax, vertices, faces; color=continuous_values, colormap=colormap, colorrange=colorrange, nan_color=:black, shading=false)
     push!(decorations, GLMakie.Colorbar(fig[1, 2], plt))
     return (plot=plt, decorations=decorations)
