@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 520" role="img" aria-labelledby="title desc">
+  <title id="title">AdaptiveSampling.jl valued triangulation illustration</title>
+  <desc id="desc">A triangulated parameter window with colored complete regions, black incomplete regions, and a compact control bar.</desc>
+  <rect width="900" height="520" fill="#f6f7f9"/>
+  <rect x="44" y="32" width="812" height="410" rx="8" fill="#050508"/>
+  <g stroke="#24242b" stroke-width="2">
+    <path d="M44 32 186 108 130 226 44 442Z" fill="#1b1033"/>
+    <path d="M186 108 300 44 370 156 130 226Z" fill="#5e153e"/>
+    <path d="M300 44 520 66 370 156Z" fill="#c2362a"/>
+    <path d="M520 66 856 32 692 168Z" fill="#ec7324"/>
+    <path d="M370 156 520 66 692 168 548 250Z" fill="#f2b83a"/>
+    <path d="M130 226 370 156 304 326Z" fill="#111"/>
+    <path d="M370 156 548 250 304 326Z" fill="#f7eeb8"/>
+    <path d="M548 250 692 168 856 442Z" fill="#e95a21"/>
+    <path d="M304 326 548 250 490 442 44 442Z" fill="#2c1743"/>
+    <path d="M548 250 856 442 490 442Z" fill="#871c39"/>
+  </g>
+  <g fill="none" stroke="#ffffff" stroke-opacity="0.24" stroke-width="1.5">
+    <path d="M44 32 856 442"/>
+    <path d="M856 32 44 442"/>
+    <path d="M186 108 490 442"/>
+    <path d="M692 168 44 442"/>
+    <path d="M300 44 304 326"/>
+    <path d="M520 66 548 250"/>
+  </g>
+  <rect x="568" y="54" width="260" height="152" rx="8" fill="#ffffff" fill-opacity="0.92"/>
+  <text x="592" y="88" font-family="Inter, Arial, sans-serif" font-size="20" font-weight="700" fill="#171717">discrete values</text>
+  <g font-family="Inter, Arial, sans-serif" font-size="16" fill="#222">
+    <rect x="594" y="112" width="20" height="20" fill="#1b1033"/><text x="626" y="129">region 1</text>
+    <rect x="594" y="144" width="20" height="20" fill="#c2362a"/><text x="626" y="161">region 2</text>
+    <rect x="594" y="176" width="20" height="20" fill="#f2b83a"/><text x="626" y="193">region 3</text>
+  </g>
+  <g font-family="Inter, Arial, sans-serif" font-size="16" font-weight="700">
+    <rect x="250" y="462" width="116" height="34" rx="6" fill="#ffffff" stroke="#cdd2dc"/>
+    <text x="283" y="484" fill="#16181d">Refine</text>
+    <rect x="378" y="462" width="42" height="34" rx="6" fill="#ffffff" stroke="#cdd2dc"/>
+    <text x="393" y="484" fill="#16181d">&#8592;</text>
+    <rect x="430" y="462" width="42" height="34" rx="6" fill="#ffffff" stroke="#cdd2dc"/>
+    <text x="445" y="484" fill="#16181d">&#8594;</text>
+    <rect x="482" y="462" width="42" height="34" rx="6" fill="#ffffff" stroke="#cdd2dc"/>
+    <text x="497" y="484" fill="#16181d">&#8593;</text>
+    <rect x="534" y="462" width="42" height="34" rx="6" fill="#ffffff" stroke="#cdd2dc"/>
+    <text x="549" y="484" fill="#16181d">&#8595;</text>
+    <rect x="590" y="462" width="86" height="34" rx="6" fill="#ffffff" stroke="#cdd2dc"/>
+    <text x="607" y="484" fill="#16181d">Zoom +</text>
+    <rect x="688" y="462" width="86" height="34" rx="6" fill="#ffffff" stroke="#cdd2dc"/>
+    <text x="706" y="484" fill="#16181d">Zoom -</text>
+  </g>
+</svg>
