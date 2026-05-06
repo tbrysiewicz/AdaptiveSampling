@@ -7,7 +7,6 @@ import GLMakie
 
 export
     visualize,
-    visualize_with_makie,
     ValuedTriangulation,
     refine!,
     is_discrete,

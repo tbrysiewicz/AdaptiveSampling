@@ -98,6 +98,23 @@ using AdaptiveSampling
         @test AdaptiveSampling.scaled_min_refinement_area(VT) == 1.5
     end
 
+    @testset "Max-area slider exponent mapping" begin
+        VT = ValuedTriangulation(points -> [p[1] + p[2] for p in points];
+            xlims=[-1, 1],
+            ylims=[-1, 1],
+            initial_resolution=9,
+            max_refinement_area=4e-4,
+            verbose=false,
+        )
+
+        slider_range = AdaptiveSampling.default_max_area_slider_range()
+
+        @test collect(slider_range) == collect(2:6)
+        @test AdaptiveSampling.default_max_area_slider_start(VT, collect(slider_range)) == 4
+        @test isapprox(AdaptiveSampling.max_area_from_slider_exponent(VT, 5), 4e-5)
+        @test AdaptiveSampling.max_area_slider_label(6) == "Max area: window * 1e-6"
+    end
+
     @testset "Stable categorical color value order" begin
         VT = ValuedTriangulation(points -> [p[1] < 0 ? 5 : 9 for p in points];
             xlims=[-1, 1],

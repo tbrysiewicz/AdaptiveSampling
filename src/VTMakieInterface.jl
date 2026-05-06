@@ -187,22 +187,24 @@ end
 Render a `ValuedTriangulation` using GLMakie.
 
 Useful keyword arguments:
-- `refine_button=true`: add an interactive button that calls `refine!(VT)`.
+- `refine_button`: add interactive refinement controls, default `true`.
 - `button_refinement_passes`: number of refinement passes per button click.
 - `navigation_step`: arrow-button pan amount as a fraction of window size.
 - `zoom_step`: zoom amount as a fraction of window size.
 - `navigation_refinement_budget`: oracle-call budget after pan/zoom.
 - `navigation_initial_resolution`: coarse mesh size seeded after pan/zoom.
+- `max_area_refine_controls`: add exponent slider and Fully Refine button.
+- `max_area_slider_range`: integer exponents for `window_area * 1e-X`, default `2:6`.
 - `figure_size`: Makie figure size, default `(900, 900)`.
 - `plot_all_triangles`: include incomplete triangles in the colored mesh.
 - `legend_max_values`: categorical legend threshold, default `20`.
 - `discrete_legend`: force or disable categorical legend behavior.
 """
 function visualize(VT::ValuedTriangulation; kwargs...)::GLMakie.Figure
-    refine_button = get(kwargs, :refine_button, false)
+    refine_button = get(kwargs, :refine_button, true)
     button_refinement_passes = get(kwargs, :button_refinement_passes, 1)
 
-    figure_size = get(kwargs, :figure_size, (900, 900))
+    figure_size = get(kwargs, :figure_size, refine_button ? (1300, 900) : (900, 900))
     fig = GLMakie.Figure(size=figure_size)
     ax = GLMakie.Axis(fig[1, 1]; xlabel="x", ylabel="y", aspect=GLMakie.DataAspect(), backgroundcolor=:black)
     GLMakie.colsize!(fig.layout, 1, GLMakie.Relative(1))
@@ -234,13 +236,6 @@ function save(fig::GLMakie.Figure, filename::String; file_extension = "png", dpi
     println("Plot saved to $filename")
     return filename
 end
-
-"""
-    visualize_with_makie(args...; kwargs...)
-
-Compatibility alias for `visualize`.
-"""
-visualize_with_makie(args...; kwargs...) = visualize(args...; kwargs...)
 
 """
     visualize(function_oracle::Function; kwargs...) -> (ValuedTriangulation, GLMakie.Figure)

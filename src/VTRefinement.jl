@@ -188,6 +188,10 @@ function refine_until_budget_exhausted!(VT::ValuedTriangulation; verbose=is_verb
 end
 
 function refine_to_max_area!(VT::ValuedTriangulation, max_area::Real; verbose=is_verbose(VT))
+    if max_area < scaled_min_refinement_area(VT)
+        VT.min_refinement_area = 0.99 * Float64(max_area) / bounding_box_area(VT)
+        verbose && println("Lowered min_refinement_area to ", VT.min_refinement_area, " so the scaled minimum triangle area is below max_refinement_area = ", max_area, ".")
+    end
     resolution_used = 0
     pass = 0
     while any(T -> triangulation_triangle_area(VT, T) > max_area, incomplete_triangles(VT))

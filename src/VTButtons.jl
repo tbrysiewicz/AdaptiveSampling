@@ -76,6 +76,26 @@ function refine_with_budget!(VT::ValuedTriangulation, budget::Integer; verbose=i
     return used
 end
 
+function max_area_from_slider_exponent(VT::ValuedTriangulation, exponent::Real)
+    return bounding_box_area(VT) * 10.0 ^ (-Int(round(exponent)))
+end
+
+function default_max_area_slider_range()
+    return 2:6
+end
+
+function default_max_area_slider_start(VT::ValuedTriangulation, slider_range)
+    if VT.max_refinement_area === nothing || VT.max_refinement_area <= 0
+        return first(slider_range)
+    end
+    default_start = Int(round(-log10(VT.max_refinement_area / bounding_box_area(VT))))
+    return slider_range[argmin(abs.(slider_range .- default_start))]
+end
+
+function max_area_slider_label(exponent::Real)
+    return "Max area: window * 1e-" * string(Int(round(exponent)))
+end
+
 function redraw_triangulation!(fig, ax, VT::ValuedTriangulation, drawn_ref; kwargs...)
     set_axis_window!(ax, VT)
     delete_drawn_triangulation!(ax, drawn_ref[])
@@ -127,7 +147,10 @@ function add_refine_button!(
         button_refinement_passes=1,
         navigation_step=0.20,
         zoom_step=0.20,
-        refine_button_min_area_factor=0.50,
+        refine_button_min_area_factor=0.80,
+        max_area_refine_controls=true,
+        max_area_slider_range=default_max_area_slider_range(),
+        max_area_slider_start=nothing,
         navigation_initial_resolution=250,
         navigation_refinement_budget=1000,
         verbose=is_verbose(VT),
@@ -141,7 +164,28 @@ function add_refine_button!(
     down_button = GLMakie.Button(controls[1, 5]; label="↓", tellwidth=false, width=42, height=30)
     zoom_in_button = GLMakie.Button(controls[1, 6]; label="Zoom +", tellwidth=false, width=84, height=30)
     zoom_out_button = GLMakie.Button(controls[1, 7]; label="Zoom -", tellwidth=false, width=84, height=30)
-    GLMakie.rowsize!(fig.layout, 2, GLMakie.Fixed(44))
+    GLMakie.rowgap!(fig.layout, 8)
+    GLMakie.rowsize!(fig.layout, 2, GLMakie.Fixed(52))
+    GLMakie.rowsize!(controls, 1, GLMakie.Fixed(40))
+
+    if max_area_refine_controls
+        slider_range = collect(max_area_slider_range)
+        isempty(slider_range) && error("max_area_slider_range must contain at least one value.")
+        slider_start = max_area_slider_start === nothing ? default_max_area_slider_start(VT, slider_range) : max_area_slider_start
+        max_area_slider = GLMakie.Slider(controls[1, 9]; range=slider_range, startvalue=slider_start, tellwidth=true, width=260)
+        max_area_label = GLMakie.Label(
+            controls[1, 8],
+            GLMakie.lift(max_area_slider_label, max_area_slider.value);
+            tellwidth=false,
+            width=130,
+        )
+        max_area_button = GLMakie.Button(controls[1, 10]; label="Fully Refine", tellwidth=false, width=120, height=30)
+
+        GLMakie.on(max_area_button.clicks) do _
+            refine_to_max_area!(VT, max_area_from_slider_exponent(VT, max_area_slider.value[]); verbose=verbose)
+            redraw_triangulation!(fig, ax, VT, drawn_ref; kwargs...)
+        end
+    end
 
     GLMakie.on(refine_button.clicks) do _
         for _ in 1:button_refinement_passes
