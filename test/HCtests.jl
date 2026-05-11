@@ -45,6 +45,73 @@ function TwentySevenLines()
     return System(Eqs; variables=[b[1], b[2], c[1], c[2]], parameters=Params)
 end
 
+# Plane conics in P^3 meeting points and lines; see Hauenstein-Sottile,
+# "Algorithm XXX: alphaCertified", Section 5.3.
+const SPACE_CONIC_DEGREES = Dict(
+    (npoints=0, nlines=8) => 92,
+    (npoints=1, nlines=6) => 18,
+    (npoints=2, nlines=4) => 4,
+    (npoints=3, nlines=2) => 1,
+    (npoints=4, nlines=0) => 0,
+)
+
+function SpaceConics(; npoints::Int, nlines::Int)
+    @assert 2npoints + nlines == 8 "Plane conics in P^3 have dimension 8, so need 2npoints + nlines == 8."
+    @assert 0 <= npoints <= 4 "This Schubert problem has npoints in 0:4."
+    @assert 0 <= nlines <= 8 "This Schubert problem has nlines in 0:8."
+
+    @var A B C
+    @var c11 c22 c12 c13 c23
+
+    # Point parameters: p[:, i] is the i-th point in P^3.
+    @var p[1:4, 1:npoints]
+
+    # Line parameters: the j-th line is spanned by u[:, j] and v[:, j].
+    @var u[1:4, 1:nlines] v[1:4, 1:nlines]
+
+    variables = [A, B, C, c11, c22, c12, c13, c23]
+    parameters = vcat(vec(p), vec(u), vec(v))
+
+    q(x1, x2, x3) =
+        c11*x1^2 +
+        c22*x2^2 +
+        x3^2 +
+        c12*x1*x2 +
+        c13*x1*x3 +
+        c23*x2*x3
+
+    h(x1, x2, x3, x4) = x4 - A*x1 - B*x2 - C*x3
+
+    eqs = []
+
+    for i in 1:npoints
+        push!(eqs, h(p[1, i], p[2, i], p[3, i], p[4, i]))
+        push!(eqs, q(p[1, i], p[2, i], p[3, i]))
+    end
+
+    for j in 1:nlines
+        hu = h(u[1, j], u[2, j], u[3, j], u[4, j])
+        hv = h(v[1, j], v[2, j], v[3, j], v[4, j])
+
+        z1 = hv*u[1, j] - hu*v[1, j]
+        z2 = hv*u[2, j] - hu*v[2, j]
+        z3 = hv*u[3, j] - hu*v[3, j]
+
+        push!(eqs, q(z1, z2, z3))
+    end
+
+    return System(eqs; variables=variables, parameters=parameters)
+end
+
+# Compatibility with the original positional convention: lines first, points second.
+SpaceConics(nlines::Int, npoints::Int) = SpaceConics(; npoints=npoints, nlines=nlines)
+
+expected_space_conic_degree(; npoints::Int, nlines::Int) =
+    SPACE_CONIC_DEGREES[(npoints=npoints, nlines=nlines)]
+
+expected_space_conic_degree(nlines::Int, npoints::Int) =
+    expected_space_conic_degree(; npoints=npoints, nlines=nlines)
+
 function gram_schmidt(basis_vectors::Vector; kwargs...)
     M = hcat(basis_vectors...)
     Q = Matrix(qr(M).Q)

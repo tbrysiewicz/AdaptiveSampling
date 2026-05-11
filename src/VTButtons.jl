@@ -81,7 +81,7 @@ function max_area_from_slider_exponent(VT::ValuedTriangulation, exponent::Real)
 end
 
 function default_max_area_slider_range()
-    return 2:6
+    return 3:8
 end
 
 function default_max_area_slider_start(VT::ValuedTriangulation, slider_range)
