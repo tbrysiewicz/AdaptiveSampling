@@ -63,11 +63,30 @@ function SpaceConics(; npoints::Int, nlines::Int)
     @var A B C
     @var c11 c22 c12 c13 c23
 
-    # Point parameters: p[:, i] is the i-th point in P^3.
-    @var p[1:4, 1:npoints]
+    fixed_points = npoints >= 4 ? 4 : 0
+    fixed_lines = fixed_points == 0 && nlines >= 3 ? 3 : 0
+    free_points = npoints - fixed_points
+    free_lines = nlines - fixed_lines
 
-    # Line parameters: the j-th line is spanned by u[:, j] and v[:, j].
-    @var u[1:4, 1:nlines] v[1:4, 1:nlines]
+    # Kill the ambient projective symmetry in the parameter space by fixing
+    # standard general-position incidence conditions whenever this Schubert
+    # problem contains enough of them.
+    e = [[i == j ? 1 : 0 for i in 1:4] for j in 1:4]
+
+    # Free point parameters: p[:, i] is the i-th non-normalized point in P^3.
+    @var p[1:4, 1:free_points]
+
+    # Free line parameters: the j-th non-normalized line is spanned by u[:, j] and v[:, j].
+    @var u[1:4, 1:free_lines] v[1:4, 1:free_lines]
+
+    points = vcat(e[1:fixed_points], [p[:, i] for i in 1:free_points])
+    # Use skew lines that are compatible with the conic chart q = ... + x3^2.
+    # In particular, avoid fixing span(e3,e4), which would force the incidence
+    # point [0:0:1] where this chart cannot see a conic.
+    fixed_line_us = fixed_lines == 0 ? [] : [e[1], e[2], e[1] + e[2] + e[3]]
+    fixed_line_vs = fixed_lines == 0 ? [] : [e[3], e[4], e[1] - e[2] + e[4]]
+    line_us = vcat(fixed_line_us, [u[:, j] for j in 1:free_lines])
+    line_vs = vcat(fixed_line_vs, [v[:, j] for j in 1:free_lines])
 
     variables = [A, B, C, c11, c22, c12, c13, c23]
     parameters = vcat(vec(p), vec(u), vec(v))
@@ -85,17 +104,21 @@ function SpaceConics(; npoints::Int, nlines::Int)
     eqs = []
 
     for i in 1:npoints
-        push!(eqs, h(p[1, i], p[2, i], p[3, i], p[4, i]))
-        push!(eqs, q(p[1, i], p[2, i], p[3, i]))
+        point = points[i]
+        push!(eqs, h(point[1], point[2], point[3], point[4]))
+        push!(eqs, q(point[1], point[2], point[3]))
     end
 
     for j in 1:nlines
-        hu = h(u[1, j], u[2, j], u[3, j], u[4, j])
-        hv = h(v[1, j], v[2, j], v[3, j], v[4, j])
+        line_u = line_us[j]
+        line_v = line_vs[j]
 
-        z1 = hv*u[1, j] - hu*v[1, j]
-        z2 = hv*u[2, j] - hu*v[2, j]
-        z3 = hv*u[3, j] - hu*v[3, j]
+        hu = h(line_u[1], line_u[2], line_u[3], line_u[4])
+        hv = h(line_v[1], line_v[2], line_v[3], line_v[4])
+
+        z1 = hv*line_u[1] - hu*line_v[1]
+        z2 = hv*line_u[2] - hu*line_v[2]
+        z3 = hv*line_u[3] - hu*line_v[3]
 
         push!(eqs, q(z1, z2, z3))
     end
@@ -137,11 +160,14 @@ function real_solution_function(
         F::System;
         plane_points = [randn(Float64, nparameters(F)) for _ in 1:3],
         start_parameters = nothing,
+        backup_start_parameters = nothing,
         wildcard_parity_mismatch = true)
 
     G = restrict(F, plane_points)
     P = start_parameters === nothing ? randn(ComplexF64, nparameters(G)) : start_parameters
+    P_backup = backup_start_parameters === nothing ? randn(ComplexF64, nparameters(G)) : backup_start_parameters
     S = solve(G; target_parameters=P)
+    S_backup = solve(G; target_parameters=P_backup)
     total_solution_parity = isodd(nsolutions(S))
 
     function real_solution_counter(points)
@@ -149,10 +175,24 @@ function real_solution_function(
             start_parameters=P,
             target_parameters=points,
         )
+        backup_results = nothing
 
         counts = [nreal(result_from_many_solve_item(R)) for R in results]
         if wildcard_parity_mismatch
-            return [isodd(c) == total_solution_parity ? c : :wildcard for c in counts]
+            for i in eachindex(counts)
+                isodd(counts[i]) == total_solution_parity && continue
+
+                if backup_results === nothing
+                    println("Parity mismatch detected; recalculating real solution counts with backup start solutions.")
+                    backup_results = solve(G, S_backup;
+                        start_parameters=P_backup,
+                        target_parameters=points,
+                    )
+                end
+
+                backup_count = nreal(result_from_many_solve_item(backup_results[i]))
+                counts[i] = isodd(backup_count) == total_solution_parity ? backup_count : :wildcard
+            end
         end
         return counts
     end
