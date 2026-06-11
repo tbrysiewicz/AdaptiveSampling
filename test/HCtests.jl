@@ -177,7 +177,7 @@ function real_solution_function(
         )
         backup_results = nothing
 
-        counts = [nreal(result_from_many_solve_item(R)) for R in results]
+        counts = Any[nreal(result_from_many_solve_item(R)) for R in results]
         if wildcard_parity_mismatch
             for i in eachindex(counts)
                 isodd(counts[i]) == total_solution_parity && continue

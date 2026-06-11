@@ -34,18 +34,18 @@ mutable struct ValuedTriangulation
     function_oracle::Function
     triangulation::Any
     function_cache::FunctionCache
-    point_indices::Dict{Tuple,Int64}
+    point_indices::Dict{Tuple,Int64} #book-keeping
     incomplete_triangles::Set{TriangleKey}
     is_complete::Function
-    strategy::Symbol
-    total_oracle_calls::Int64
-    oracle_budget::Union{Nothing,Int64}
-    min_refinement_area::Float64
-    max_refinement_area::Union{Nothing,Float64}
-    xlims::Vector{Float64}
+    strategy::Symbol #user option
+    total_oracle_calls::Int64 #record keeping
+    oracle_budget::Union{Nothing,Int64} #user bound
+    min_refinement_area::Float64 #user bound
+    max_refinement_area::Union{Nothing,Float64} #user bound
+    xlims::Vector{Float64}#user visualization bound
     ylims::Vector{Float64}
-    covered_windows::Vector{NTuple{4,Float64}}
-    plot_value_order::Dict{Bool,Vector{Any}}
+    covered_windows::Vector{NTuple{4,Float64}} #keeps track of seen windows
+    plot_value_order::Dict{Bool,Vector{Any}} #
     verbose::Bool
 end
 
