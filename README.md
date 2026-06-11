@@ -1,16 +1,17 @@
-# AdaptiveSampling.jl
+# AdaptiveVisualization.jl
 
-AdaptiveSampling.jl adaptively samples expensive functions over a two-dimensional
+AdaptiveVisualization.jl adaptively samples expensive functions over a two-dimensional
 parameter window and visualizes the result with GLMakie. It is designed for
 parameter landscapes where most regions are boring, but boundary regions or
 jump loci deserve more samples.
 
-![A valued triangulation with controls](docs/valued-triangulation.svg)
+![A triangulation cache with controls](docs/triangulation-cache.svg)
 
-The current implementation is triangulation-native: it stores a Delaunay
-triangulation, a cache of oracle values at sampled points, and the set of
-triangles still considered incomplete. Refinement inserts new points only into
-incomplete triangles, using incremental Delaunay updates.
+The Delaunay triangulation stores sampled points and triangle connectivity,
+`TriangulationCache` stores oracle values by vertex index, and
+`incomplete_triangles` stores only the triangles still needing refinement.
+Refinement inserts new points only into incomplete triangles, using incremental
+Delaunay updates.
 
 ## Installation
 
@@ -25,17 +26,17 @@ Pkg.instantiate()
 Then load the package:
 
 ```julia
-using AdaptiveSampling
+using AdaptiveVisualization
 ```
 
 ## Quick Start
 
 ```julia
-using AdaptiveSampling
+using AdaptiveVisualization
 
 f(x, y) = x^2 + y^2 < 1 ? 1 : 2
 
-VT, fig = visualize(f;
+TC, fig = visualize(f;
     xlims = [-2, 2],
     ylims = [-2, 2],
     total_resolution = 1000,
@@ -44,10 +45,10 @@ VT, fig = visualize(f;
 )
 ```
 
-`visualize(f; ...)` returns both the `ValuedTriangulation` and the Makie figure.
+`visualize(f; ...)` returns both the `TriangulationCache` and the Makie figure.
 It also displays the figure. The `Refine` button performs another refinement
 pass, and the arrow/zoom buttons move around the parameter window while keeping
-previously computed function values cached.
+previously computed function values available.
 
 ## Batched Oracles
 
@@ -78,35 +79,45 @@ The main refinement strategies are:
 - `:barycenter`: add the triangle barycenter.
 - `:random`: add one random point inside the triangle.
 
-By default, `refine!(VT)` performs one pass over visible incomplete triangles.
+By default, `refine!(TC)` performs one pass over visible incomplete triangles.
 It skips triangles whose area is at or below
-`VT.min_refinement_area * window_area`. The default normalized
+`TC.min_refinement_area * window_area`. The default normalized
 `min_refinement_area` is `1e-4`.
 
 To refine repeatedly until all remaining incomplete triangles are too small:
 
 ```julia
-refine!(VT; by_min_area = 1e-5)
+refine!(TC; by_min_area = 1e-5)
 ```
 
 ## Complete and Incomplete Triangles
 
 A triangle is complete when its vertex values are consistent according to the
-completeness predicate. The default predicate treats small finite value sets as
-discrete and larger numeric value sets as continuous. You can pass your own:
+completeness predicate. Custom predicates receive the triangle vertices and the
+three corresponding function values:
 
 ```julia
-same_parity(triangle, cache; kwargs...) = begin
-    values = [cache[i][2] for i in triangle]
+same_parity(vertices, values; kwargs...) = begin
     all(iseven, values) || all(isodd, values)
 end
 
-VT = ValuedTriangulation(f; is_complete = same_parity)
+TC = TriangulationCache(f; is_complete = same_parity)
 ```
 
-The special value `:wildcard` is treated as compatible with every other value
-for completeness. Triangles whose plotted value is unknown or all-wildcard are
-drawn black.
+Here `vertices` is an `NTuple{3,NTuple{2,Float64}}`, and `values` is a vector
+of the three oracle values at those vertices.
+
+The default predicate treats non-real values as discrete, regardless of how many
+distinct values are present. Discrete triangles are complete when all
+non-`:wildcard` values are equal. Numeric triangles use a tolerance derived from
+the global range of sampled real values. The special value `:wildcard` is
+treated as compatible with every other value for completeness.
+
+For plotting, numeric complete triangles are colored by the average of their
+non-wildcard vertex values. Non-real complete triangles are colored by their
+shared category; if their non-wildcard values are not equal, plotting raises an
+error because there is no unambiguous category to draw. Triangles whose plotted
+value is unknown or all-wildcard are drawn black.
 
 ## HomotopyContinuation.jl Use
 
@@ -116,14 +127,14 @@ code in `test/HCtests.jl` shows one such workflow:
 ```julia
 using LinearAlgebra
 using HomotopyContinuation
-using AdaptiveSampling
+using AdaptiveVisualization
 
 include("test/HCtests.jl")
 
 F = TwentySevenLines()
 real_line_count = real_solution_function(F)
 
-VT, fig = visualize(real_line_count;
+TC, fig = visualize(real_line_count;
     xlims = [-5, 5],
     ylims = [-5, 5],
     total_resolution = 1000,
@@ -141,14 +152,14 @@ target parameters directly to `solve`.
 The main user-facing functions are:
 
 - `visualize(f; kwargs...)`
-- `ValuedTriangulation(f; kwargs...)`
-- `refine!(VT; kwargs...)`
-- `complete_polygons(VT)`
-- `incomplete_polygons(VT)`
-- `is_discrete(function_cache)`
-- `is_complete(triangle, function_cache; kwargs...)`
+- `TriangulationCache(f; kwargs...)`
+- `refine!(TC; kwargs...)`
+- `complete_triangles(TC)`
+- `incomplete_triangles(TC)`
+- `is_discrete(function_values)`
+- `is_complete(vertices, values; kwargs...)` for custom completeness predicates
 - `save(fig, filename; kwargs...)`
 
 ## License
 
-AdaptiveSampling.jl is released under the MIT license.
+AdaptiveVisualization.jl is released under the MIT license.

@@ -1,10 +1,61 @@
-# GLMakie rendering for ValuedTriangulation.
+# GLMakie rendering for TriangulationCache.
 
-function polygon_plot_value(VT::ValuedTriangulation, triangle::Vector{Int64}; plot_log_transform=false)
-    vertex_values = non_wildcard_values(map(last, function_cache(VT)[triangle]))
+############################
+# Plotting Helpers
+############################
+
+# Return the default colormap.
+function default_continuous_colormap()
+    return [
+        GLMakie.RGBf(0.015, 0.015, 0.035),
+        GLMakie.RGBf(0.200, 0.020, 0.250),
+        GLMakie.RGBf(0.600, 0.040, 0.180),
+        GLMakie.RGBf(0.900, 0.250, 0.070),
+        GLMakie.RGBf(0.990, 0.720, 0.200),
+        GLMakie.RGBf(1.000, 0.980, 0.760),
+    ]
+end
+
+# Pad flat color ranges.
+function finite_color_range(values::AbstractVector{<:Real})
+    lo, hi = extrema(values)
+    if lo == hi
+        pad = max(abs(lo), 1.0) / 2
+        return (lo - pad, hi + pad)
+    end
+    return (lo, hi)
+end
+
+# Build categorical colors.
+function categorical_palette(n::Integer)
+    base_colors = GLMakie.Makie.wong_colors()
+    n <= length(base_colors) && return base_colors[1:n]
+
+    extra_colors = map(GLMakie.Makie.to_color, [:purple, :brown, :pink, :gray, :olive, :cyan])
+    colors = vcat(base_colors, extra_colors)
+    while length(colors) < n
+        append!(colors, colors)
+    end
+    return colors[1:n]
+end
+
+# Add a value legend.
+function add_value_legend!(fig, elements, labels, title)
+    isempty(elements) && return nothing
+    return GLMakie.Legend(fig[1, 1], elements, labels, title;
+        tellwidth=false, tellheight=false, halign=:right, valign=:top,
+        margin=(10, 10, 10, 10))
+end
+
+############################
+# Triangle Values
+############################
+
+function triangle_plot_value(TC::TriangulationCache, triangle::Vector{Int64}; plot_log_transform=false)
+    vertex_values = non_wildcard_values(function_values(TC)[triangle])
     isempty(vertex_values) && return nothing
-    value = numeric_mean_or_nothing(vertex_values)
-    if value !== nothing
+    if all(is_real_value, vertex_values)
+        value = numeric_mean_or_nothing(vertex_values)
         if plot_log_transform
             value <= -1 && return nothing
             value = log(value + 1)
@@ -12,7 +63,7 @@ function polygon_plot_value(VT::ValuedTriangulation, triangle::Vector{Int64}; pl
         return isfinite(value) ? value : nothing
     end
 
-    all(==(first(vertex_values)), vertex_values) || return nothing
+    all(==(first(vertex_values)), vertex_values) || error("Cannot plot a complete triangle with non-equal non-real vertex values: $(vertex_values).")
     return first(vertex_values)
 end
 
@@ -42,15 +93,15 @@ function append_missing_values!(values::Vector{Any}, candidates)
     return values
 end
 
-function stable_plot_value_order!(VT::ValuedTriangulation, visible_values; plot_log_transform=false)
-    values = get!(VT.plot_value_order, Bool(plot_log_transform), Any[])
-    cached_values = (cached_plot_value(value; plot_log_transform=plot_log_transform) for value in output_values(VT))
+function stable_plot_value_order!(TC::TriangulationCache, visible_values; plot_log_transform=false)
+    values = get!(TC.plot_value_order, Bool(plot_log_transform), Any[])
+    cached_values = (cached_plot_value(value; plot_log_transform=plot_log_transform) for value in output_values(TC))
     append_missing_values!(values, cached_values)
     append_missing_values!(values, visible_values)
     return values
 end
 
-function should_use_discrete_legend_any(values; legend_max_values=VALUED_TRIANGULATION_DEFAULT_LEGEND_LIMIT, discrete_legend=nothing)
+function should_use_discrete_legend_any(values; legend_max_values=TRIANGULATION_CACHE_DEFAULT_LEGEND_LIMIT, discrete_legend=nothing)
     categories = categorical_unique_values_any(values)
     use_legend = discrete_legend === nothing ? 0 < length(categories) <= legend_max_values : discrete_legend
     return use_legend, categories
@@ -85,10 +136,10 @@ function numeric_continuous_color_range(values)
     return isempty(numeric_values) ? (0.0, 1.0) : finite_color_range(numeric_values)
 end
 
-function numeric_continuous_color_range(VT::ValuedTriangulation, visible_values; plot_log_transform=false)
+function numeric_continuous_color_range(TC::TriangulationCache, visible_values; plot_log_transform=false)
     cached_values = [
         cached_plot_value(value; plot_log_transform=plot_log_transform)
-        for value in output_values(VT)
+        for value in output_values(TC)
     ]
     values = [
         Float64(value)
@@ -98,16 +149,16 @@ function numeric_continuous_color_range(VT::ValuedTriangulation, visible_values;
     return isempty(values) ? (0.0, 1.0) : finite_color_range(values)
 end
 
-function selected_triangles(VT::ValuedTriangulation, plot_all_triangles::Bool)
-    triangles = if plot_all_triangles || isempty(complete_triangles(VT))
-        vcat(complete_triangles(VT), incomplete_triangles(VT))
+function selected_triangles(TC::TriangulationCache, plot_all_triangles::Bool)
+    triangles = if plot_all_triangles || isempty(complete_triangles(TC))
+        vcat(complete_triangles(TC), incomplete_triangles(TC))
     else
-        complete_triangles(VT)
+        complete_triangles(TC)
     end
-    return [T for T in triangles if triangle_intersects_window(VT, T)]
+    return [T for T in triangles if triangle_intersects_window(TC, T)]
 end
 
-function triangulation_mesh_data(VT::ValuedTriangulation, triangles::PolygonList, triangle_values)
+function triangulation_mesh_data(TC::TriangulationCache, triangles::TriangleList, triangle_values)
     total_vertices = 3 * length(triangles)
     vertices = Matrix{Float64}(undef, total_vertices, 2)
     faces = Matrix{Int64}(undef, length(triangles), 3)
@@ -115,7 +166,7 @@ function triangulation_mesh_data(VT::ValuedTriangulation, triangles::PolygonList
     for (triangle_index, triangle) in enumerate(triangles)
         vertex_offset = 3 * (triangle_index - 1)
         for local_index in 1:3
-            point = function_cache(VT)[triangle[local_index]][1]
+            point = get_point(triangulation(TC), triangle[local_index])
             row = vertex_offset + local_index
             vertices[row, 1] = point[1]
             vertices[row, 2] = point[2]
@@ -126,18 +177,18 @@ function triangulation_mesh_data(VT::ValuedTriangulation, triangles::PolygonList
     return vertices, faces
 end
 
-function draw_triangulation!(fig, ax, VT::ValuedTriangulation; kwargs...)
+function draw_triangulation!(fig, ax, TC::TriangulationCache; kwargs...)
     plot_log_transform = get(kwargs, :plot_log_transform, false)
-    plot_all_triangles = get(kwargs, :plot_all_triangles, !is_discrete(VT))
+    plot_all_triangles = get(kwargs, :plot_all_triangles, !is_discrete(TC))
     colormap = get(kwargs, :colormap, default_continuous_colormap())
-    legend_max_values = get(kwargs, :legend_max_values, VALUED_TRIANGULATION_DEFAULT_LEGEND_LIMIT)
+    legend_max_values = get(kwargs, :legend_max_values, TRIANGULATION_CACHE_DEFAULT_LEGEND_LIMIT)
     discrete_legend = get(kwargs, :discrete_legend, nothing)
     legend_title = get(kwargs, :legend_title, "value")
     decorations = Any[]
 
-    triangles = selected_triangles(VT, plot_all_triangles)
-    triangle_values = [polygon_plot_value(VT, T; plot_log_transform=plot_log_transform) for T in triangles]
-    vertices, faces = triangulation_mesh_data(VT, triangles, triangle_values)
+    triangles = selected_triangles(TC, plot_all_triangles)
+    triangle_values = [triangle_plot_value(TC, T; plot_log_transform=plot_log_transform) for T in triangles]
+    vertices, faces = triangulation_mesh_data(TC, triangles, triangle_values)
     vertex_values = vertex_plot_values(triangle_values)
 
     if size(faces, 1) == 0
@@ -149,7 +200,7 @@ function draw_triangulation!(fig, ax, VT::ValuedTriangulation; kwargs...)
         return (plot=GLMakie.mesh!(ax, vertices, faces; color=:black, shading=false), decorations=decorations)
     end
 
-    categories = stable_plot_value_order!(VT, vertex_values; plot_log_transform=plot_log_transform)
+    categories = stable_plot_value_order!(TC, vertex_values; plot_log_transform=plot_log_transform)
     use_discrete_legend = discrete_legend === nothing ? 0 < length(categories) <= legend_max_values : discrete_legend
     if use_discrete_legend
         category_colors = categorical_palette(length(categories))
@@ -164,7 +215,7 @@ function draw_triangulation!(fig, ax, VT::ValuedTriangulation; kwargs...)
     end
 
     continuous_values = continuous_vertex_values(vertex_values, categories)
-    colorrange = numeric_continuous_color_range(VT, vertex_values; plot_log_transform=plot_log_transform)
+    colorrange = numeric_continuous_color_range(TC, vertex_values; plot_log_transform=plot_log_transform)
     plt = GLMakie.mesh!(ax, vertices, faces; color=continuous_values, colormap=colormap, colorrange=colorrange, nan_color=:black, shading=false)
     push!(decorations, GLMakie.Colorbar(fig[1, 2], plt))
     return (plot=plt, decorations=decorations)
@@ -182,9 +233,9 @@ function delete_drawn_triangulation!(ax, drawn)
 end
 
 """
-    visualize(VT::ValuedTriangulation; kwargs...) -> GLMakie.Figure
+    visualize(TC::TriangulationCache; kwargs...) -> GLMakie.Figure
 
-Render a `ValuedTriangulation` using GLMakie.
+Render a `TriangulationCache` using GLMakie.
 
 Useful keyword arguments:
 - `refine_button`: add interactive refinement controls, default `true`.
@@ -200,7 +251,7 @@ Useful keyword arguments:
 - `legend_max_values`: categorical legend threshold, default `20`.
 - `discrete_legend`: force or disable categorical legend behavior.
 """
-function visualize(VT::ValuedTriangulation; kwargs...)::GLMakie.Figure
+function visualize(TC::TriangulationCache; kwargs...)::GLMakie.Figure
     refine_button = get(kwargs, :refine_button, true)
     button_refinement_passes = get(kwargs, :button_refinement_passes, 1)
 
@@ -209,12 +260,12 @@ function visualize(VT::ValuedTriangulation; kwargs...)::GLMakie.Figure
     ax = GLMakie.Axis(fig[1, 1]; xlabel="x", ylabel="y", aspect=GLMakie.DataAspect(), backgroundcolor=:black)
     GLMakie.colsize!(fig.layout, 1, GLMakie.Relative(1))
     GLMakie.rowsize!(fig.layout, 1, GLMakie.Relative(1))
-    GLMakie.xlims!(ax, VT.xlims[1], VT.xlims[2])
-    GLMakie.ylims!(ax, VT.ylims[1], VT.ylims[2])
+    GLMakie.xlims!(ax, TC.xlims[1], TC.xlims[2])
+    GLMakie.ylims!(ax, TC.ylims[1], TC.ylims[2])
 
-    drawn_ref = Ref{Any}(draw_triangulation!(fig, ax, VT; kwargs...))
+    drawn_ref = Ref{Any}(draw_triangulation!(fig, ax, TC; kwargs...))
 
-    refine_button && add_refine_button!(fig, ax, VT, drawn_ref; button_refinement_passes=button_refinement_passes, kwargs...)
+    refine_button && add_refine_button!(fig, ax, TC, drawn_ref; button_refinement_passes=button_refinement_passes, kwargs...)
 
     return fig
 end
@@ -238,26 +289,26 @@ function save(fig::GLMakie.Figure, filename::String; file_extension = "png", dpi
 end
 
 """
-    visualize(function_oracle::Function; kwargs...) -> (ValuedTriangulation, GLMakie.Figure)
+    visualize(function_oracle::Function; kwargs...) -> (TriangulationCache, GLMakie.Figure)
 
-Construct, refine, display, and return a `ValuedTriangulation` and its Makie
+Construct, refine, display, and return a `TriangulationCache` and its Makie
 figure. `total_resolution` is interpreted as the total oracle-call budget,
 including the initial mesh.
 """
 function visualize(function_oracle::Function; total_resolution=nothing, max_refinement_area=nothing, verbose=true, kwargs...)
     total_given = total_resolution !== nothing
-    resolved_total = total_given ? Int(total_resolution) : VALUED_TRIANGULATION_DEFAULT_TOTAL_RESOLUTION
-    VT = ValuedTriangulation(function_oracle; total_resolution=resolved_total, verbose=verbose, kwargs...)
+    resolved_total = total_given ? Int(total_resolution) : TRIANGULATION_CACHE_DEFAULT_TOTAL_RESOLUTION
+    TC = TriangulationCache(function_oracle; total_resolution=resolved_total, verbose=verbose, kwargs...)
     if max_refinement_area !== nothing
         total_given && println("Warning: max_refinement_area was supplied, so total_resolution is ignored after the initial mesh.")
-        refine_to_max_area!(VT, Float64(max_refinement_area); verbose=verbose)
-        VT.oracle_budget = nothing
+        refine_to_max_area!(TC, Float64(max_refinement_area); verbose=verbose)
+        TC.oracle_budget = nothing
     else
-        VT.oracle_budget = max(0, resolved_total - VT.total_oracle_calls)
-        refine_until_budget_exhausted!(VT; verbose=verbose)
-        VT.oracle_budget = nothing
+        TC.oracle_budget = max(0, resolved_total - TC.total_oracle_calls)
+        refine_until_budget_exhausted!(TC; verbose=verbose)
+        TC.oracle_budget = nothing
     end
-    fig = visualize(VT; kwargs...)
+    fig = visualize(TC; kwargs...)
     display(fig)
-    return VT, fig
+    return TC, fig
 end

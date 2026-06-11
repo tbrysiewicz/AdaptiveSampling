@@ -1,4 +1,4 @@
-using AdaptiveSampling
+using AdaptiveVisualization
 using HomotopyContinuation
 using LinearAlgebra
 using Test
@@ -11,7 +11,7 @@ using Test
 #     include("test/HCtests.jl")
 #     F = TwentySevenLines()
 #     f = real_solution_function(F)
-#     VT, fig = visualize(f; xlims=[-5, 5], ylims=[-5, 5])
+#     TC, fig = visualize(f; xlims=[-5, 5], ylims=[-5, 5])
 #
 # Or run it directly by setting:
 #
@@ -209,7 +209,7 @@ function run_twenty_seven_lines_example(;
         F = TwentySevenLines()
         f = real_solution_function(F)
 
-        VT, fig = visualize(
+        TC, fig = visualize(
             f;
             xlims=[-5, 5],
             ylims=[-5, 5],
@@ -220,8 +220,8 @@ function run_twenty_seven_lines_example(;
         )
 
         display_figure && display(fig)
-        @test length(AdaptiveSampling.function_cache(VT)) > 0
-        return VT
+        @test length(AdaptiveVisualization.function_values(TC)) > 0
+        return TC
     end
 end
 

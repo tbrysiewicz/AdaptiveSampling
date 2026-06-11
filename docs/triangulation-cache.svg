@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 520" role="img" aria-labelledby="title desc">
-  <title id="title">AdaptiveSampling.jl valued triangulation illustration</title>
+  <title id="title">AdaptiveVisualization.jl triangulation cache illustration</title>
   <desc id="desc">A triangulated parameter window with colored complete regions, black incomplete regions, and a compact control bar.</desc>
   <rect width="900" height="520" fill="#f6f7f9"/>
   <rect x="44" y="32" width="812" height="410" rx="8" fill="#050508"/>
