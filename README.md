@@ -68,20 +68,20 @@ julia --project=. docs/make_readme_figures.jl kuramoto
 The first example samples a disk indicator function. Triangle edges are drawn
 thinly to show how refinement concentrates around the jump locus.
 
-![Adaptive sampling of a disk indicator](docs/assets/disk-indicator.png)
+![Adaptive sampling of a disk indicator](docs/assets/disk-indicator.png?v=20260616)
 
 The same geometry also works for non-numeric oracle values. Here the oracle
 returns `"inside"` or `"outside"`, and the categorical legend is generated from
 the observed labels.
 
-![Categorical inside/outside adaptive sampling](docs/assets/categorical-inside-outside.png)
+![Categorical inside/outside adaptive sampling](docs/assets/categorical-inside-outside.png?v=20260616)
 
 The next example uses HomotopyContinuation.jl to count real solutions of a
 parametrized Kuramoto polynomial system over a two-parameter window. Black
 triangles mark unresolved or mixed-value regions; repeated refinement resolves
 more of the boundary.
 
-![Kuramoto real solution count landscape](docs/assets/kuramoto-real-solutions.png)
+![Kuramoto real solution count landscape](docs/assets/kuramoto-real-solutions.png?v=20260616)
 
 ## Batched Oracles
 
