@@ -1,32 +1,46 @@
 
 using AdaptiveVisualization
 
-#Just generate a simple initial mesh for the disk
-f(x, y) = x^2 + y^2 - 1 > 0 ? 1 : 0
-
+#Disk: make sure construction/initialization works
+f(x, y) = x^2 + y^2 < 1 ? 1 : 0
 TC = TriangulationCache(f;
     xlims = [-2, 2],
     ylims = [-2, 2],
-    initial_resolution = 100,
+    resolution = 100,
     verbose = false,
 )
 
+#Visualizatoin works with some kwargs given
 fig = visualize(TC; refine_button = false)
+fig = visualize(TC; refine_button = true, plot_triangle_edges = true)
+#Display runs
 display(fig)
 
+#User defined complete function works. Triangles are given mean values of vertices
 TC = TriangulationCache(f;
            xlims = [-2, 2],
            ylims = [-2, 2],
-           initial_resolution = 100,
+           resolution = 100,
            verbose = false,
            is_complete=(V,vals)->true,
            )
 
+
+#Non-numerical values work
 f(x,y) = x^2+y^2< 1 ? "inside" : "outside"           
+TC = TriangulationCache(f;
+           xlims = [-3, 3],
+           ylims = [-2, 2],
+           verbose = true,
+           )
+visualize(TC, plot_triangle_edges = true)
+
+
+#continuous values work
+f(x,y) = x^2+(y^2)*sin(x)
 TC = TriangulationCache(f;
            xlims = [-2, 2],
            ylims = [-2, 2],
-           initial_resolution = 100,
-           verbose = false,
+           verbose = true,
            )
-visualize(TC)
+visualize(TC, plot_triangle_edges = true)

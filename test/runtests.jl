@@ -26,8 +26,7 @@ using AdaptiveVisualization
         TC = TriangulationCache(f;
             xlims=[-1, 1],
             ylims=[-1, 1],
-            total_resolution=64,
-            initial_resolution=16,
+            resolution=16,
             verbose=false,
         )
 
@@ -43,7 +42,7 @@ using AdaptiveVisualization
         TC = TriangulationCache((x, y) -> x^2 + y^2;
             xlims=[-1, 1],
             ylims=[-1, 1],
-            initial_resolution=9,
+            resolution=9,
             verbose=false,
         )
 
@@ -55,7 +54,7 @@ using AdaptiveVisualization
         TC = TriangulationCache(points -> fill(:wildcard, length(points));
             xlims=[-1, 1],
             ylims=[-1, 1],
-            initial_resolution=9,
+            resolution=9,
             verbose=false,
         )
 
@@ -68,7 +67,7 @@ using AdaptiveVisualization
         TC = TriangulationCache(points -> [p[1] - p[2] for p in points];
             xlims=[-1, 1],
             ylims=[-1, 1],
-            initial_resolution=9,
+            resolution=9,
             strategy=:barycenter,
             min_refinement_area=0.0,
             is_complete=never_complete,
@@ -88,7 +87,7 @@ using AdaptiveVisualization
         TC = TriangulationCache(points -> [p[1] - p[2] for p in points];
             xlims=[-1, 1],
             ylims=[-1, 1],
-            initial_resolution=9,
+            resolution=9,
             strategy=:barycenter,
             min_refinement_area=0.0,
             is_complete=never_complete,
@@ -112,7 +111,7 @@ using AdaptiveVisualization
         TC = TriangulationCache(points -> [0 for _ in points];
             xlims=[0, 2],
             ylims=[0, 3],
-            initial_resolution=9,
+            resolution=9,
             strategy=:barycenter,
             min_refinement_area=1.0,
             is_complete=never_complete,
@@ -130,7 +129,7 @@ using AdaptiveVisualization
         TC = TriangulationCache(points -> [p[1] + p[2] for p in points];
             xlims=[-1, 1],
             ylims=[-1, 1],
-            initial_resolution=9,
+            resolution=9,
             max_refinement_area=4e-4,
             verbose=false,
         )
@@ -147,7 +146,7 @@ using AdaptiveVisualization
         TC = TriangulationCache(points -> [p[1] < 0 ? 5 : 9 for p in points];
             xlims=[-1, 1],
             ylims=[-1, 1],
-            initial_resolution=9,
+            resolution=9,
             verbose=false,
         )
 
@@ -163,7 +162,7 @@ using AdaptiveVisualization
         TC = TriangulationCache(points -> fill("inside", length(points));
             xlims=[-1, 1],
             ylims=[-1, 1],
-            initial_resolution=4,
+            resolution=4,
             is_complete=always_complete,
             verbose=false,
         )
@@ -175,7 +174,47 @@ using AdaptiveVisualization
         @test_throws ErrorException AdaptiveVisualization.triangle_plot_value(TC, triangle)
     end
 
+    @testset "Example visualization workflows" begin
+        disk_indicator(x, y) = x^2 + y^2 < 1 ? 1 : 0
+        TC = TriangulationCache(disk_indicator;
+            xlims=[-2, 2],
+            ylims=[-2, 2],
+            resolution=25,
+            verbose=false,
+        )
+
+        fig = visualize(TC; refine_button=false)
+        @test fig isa AdaptiveVisualization.GLMakie.Figure
+
+        fig = visualize(TC; refine_button=true, plot_triangle_edges=true)
+        @test fig isa AdaptiveVisualization.GLMakie.Figure
+
+        complete_TC = TriangulationCache(disk_indicator;
+            xlims=[-2, 2],
+            ylims=[-2, 2],
+            resolution=25,
+            verbose=false,
+            is_complete=(vertices, values) -> true,
+        )
+        @test isempty(incomplete_triangles(complete_TC))
+        @test !isempty(complete_triangles(complete_TC))
+
+        region_label(x, y) = x^2 + y^2 < 1 ? "inside" : "outside"
+        categorical_TC = TriangulationCache(region_label;
+            xlims=[-3, 3],
+            ylims=[-2, 2],
+            resolution=25,
+            verbose=false,
+        )
+        @test is_discrete(AdaptiveVisualization.output_values(categorical_TC))
+
+        fig = visualize(categorical_TC; refine_button=false, plot_triangle_edges=true)
+        @test fig isa AdaptiveVisualization.GLMakie.Figure
+    end
+
     @testset "Invalid strategy" begin
         @test_throws Exception TriangulationCache((x, y) -> x + y; strategy=:quadtree, verbose=false)
+        @test_throws Exception TriangulationCache((x, y) -> x + y; initial_resolution=9, verbose=false)
+        @test_throws Exception TriangulationCache((x, y) -> x + y; total_resolution=9, verbose=false)
     end
 end

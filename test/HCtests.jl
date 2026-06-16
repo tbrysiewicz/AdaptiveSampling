@@ -163,12 +163,15 @@ function real_solution_function(
         backup_start_parameters = nothing,
         wildcard_parity_mismatch = true)
 
-    G = restrict(F, plane_points)
+    G = nparameters(F)>2 ? restrict(F, plane_points) : F
     P = start_parameters === nothing ? randn(ComplexF64, nparameters(G)) : start_parameters
     P_backup = backup_start_parameters === nothing ? randn(ComplexF64, nparameters(G)) : backup_start_parameters
-    S = solve(G; target_parameters=P)
-    S_backup = solve(G; target_parameters=P_backup)
-    total_solution_parity = isodd(nsolutions(S))
+    S = solutions(solve(G; target_parameters=P))
+    S_backup = solutions(solve(G; target_parameters=P_backup))
+    total_solution_count = length(S)
+    count_is_invalid(count) =
+        count > total_solution_count ||
+        (wildcard_parity_mismatch && isodd(count) != isodd(total_solution_count))
 
     function real_solution_counter(points)
         results = solve(G, S;
@@ -178,12 +181,12 @@ function real_solution_function(
         backup_results = nothing
 
         counts = Any[nreal(result_from_many_solve_item(R)) for R in results]
-        if wildcard_parity_mismatch
+        if any(count_is_invalid, counts)
             for i in eachindex(counts)
-                isodd(counts[i]) == total_solution_parity && continue
+                count_is_invalid(counts[i]) || continue
 
                 if backup_results === nothing
-                    println("Parity mismatch detected; recalculating real solution counts with backup start solutions.")
+                    println("Invalid real solution count detected; recalculating with backup start solutions.")
                     backup_results = solve(G, S_backup;
                         start_parameters=P_backup,
                         target_parameters=points,
@@ -191,7 +194,7 @@ function real_solution_function(
                 end
 
                 backup_count = nreal(result_from_many_solve_item(backup_results[i]))
-                counts[i] = isodd(backup_count) == total_solution_parity ? backup_count : :wildcard
+                counts[i] = count_is_invalid(backup_count) ? :wildcard : backup_count
             end
         end
         return counts
@@ -202,7 +205,6 @@ end
 
 function run_twenty_seven_lines_example(;
         total_resolution=1000,
-        initial_resolution_fraction=0.10,
         display_figure=true,
         kwargs...)
     @testset "Twenty-seven lines opt-in HC example" begin
@@ -214,7 +216,6 @@ function run_twenty_seven_lines_example(;
             xlims=[-5, 5],
             ylims=[-5, 5],
             total_resolution=total_resolution,
-            initial_resolution_fraction=initial_resolution_fraction,
             strategy=:sierpinski,
             kwargs...,
         )

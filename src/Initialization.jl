@@ -39,9 +39,7 @@ function TriangulationCache(
         function_oracle::Function;
         xlims = [-1, 1],
         ylims = [-1, 1],
-        total_resolution = nothing,
-        initial_resolution = nothing,
-        initial_resolution_fraction = TRIANGULATION_CACHE_DEFAULT_INITIAL_RESOLUTION_FRACTION,
+        resolution = TRIANGULATION_CACHE_DEFAULT_TOTAL_RESOLUTION,
         strategy::Symbol = :sierpinski,
         min_refinement_area = TRIANGULATION_CACHE_DEFAULT_MIN_REFINEMENT_AREA,
         max_refinement_area = nothing,
@@ -49,26 +47,18 @@ function TriangulationCache(
         verbose::Bool = true,
         kwargs...)
 
+    isempty(kwargs) || error("Unsupported TriangulationCache keyword(s): $(join(keys(kwargs), ", ")).")
     strategy in TRIANGULATION_CACHE_STRATEGIES || error("Invalid strategy $strategy. Use one of $(TRIANGULATION_CACHE_STRATEGIES).")
 
-    total_given = total_resolution !== nothing
-    resolved_total = total_given ? Int(total_resolution) : TRIANGULATION_CACHE_DEFAULT_TOTAL_RESOLUTION
-    resolved_total >= 4 || error("total_resolution must be at least 4 so the initial triangulation can be two-dimensional.")
-    if max_refinement_area !== nothing && total_given
-        println("Warning: max_refinement_area was supplied, so total_resolution is ignored after the initial mesh.")
-    end
-
-    fraction = Float64(initial_resolution_fraction)
-    0 < fraction <= 1 || error("initial_resolution_fraction must be in the interval (0, 1].")
-    resolved_initial = initial_resolution === nothing ? max(4, ceil(Int, resolved_total * fraction)) : Int(initial_resolution)
-    resolved_initial = max(4, min(resolved_initial, resolved_total))
+    resolution = Int(resolution)
+    resolution >= 4 || error("resolution must be at least 4 so the initial triangulation can be two-dimensional.")
 
     xlimits = Float64.(collect(xlims))
     ylimits = Float64.(collect(ylims))
     length(xlimits) == 2 || error("xlims must have two entries.")
     length(ylimits) == 2 || error("ylims must have two entries.")
 
-    parameters = triangulation_initial_points(xlimits, ylimits, resolved_initial)
+    parameters = triangulation_initial_points(xlimits, ylimits, resolution)
     evaluation = try_evaluate_triangulation_oracle(function_oracle, parameters)
     first(evaluation) === nothing && error(oracle_error_message(last(evaluation)))
     batched_oracle, values = evaluation

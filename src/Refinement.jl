@@ -9,11 +9,6 @@ function area_of_triangle(TC::TriangulationCache, triangle::Vector{Int64})
     return area_of_triangle(triangle_points(TC, triangle))
 end
 
-# Compute the current bounding-box area.
-function bounding_box_area(TC::TriangulationCache)
-    return (TC.xlims[2] - TC.xlims[1]) * (TC.ylims[2] - TC.ylims[1])
-end
-
 # Scale the minimum area threshold.
 scaled_min_refinement_area(TC::TriangulationCache) = TC.min_refinement_area * bounding_box_area(TC)
 

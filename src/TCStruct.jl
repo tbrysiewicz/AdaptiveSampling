@@ -12,9 +12,7 @@ detected.
 
 Keyword arguments:
 - `xlims`, `ylims`: domain limits, default `[-1, 1]`.
-- `total_resolution`: total oracle-call budget used by `visualize(f; ...)`.
-- `initial_resolution`: explicit initial mesh oracle-call budget.
-- `initial_resolution_fraction`: initial budget as a fraction of `total_resolution`.
+- `resolution`: initial mesh oracle-call target.
 - `strategy`: one of `:random`, `:sierpinski`, `:barycenter`.
 - `min_refinement_area`: normalized minimum triangle area; scaled by window area.
 - `max_refinement_area`: optional iterative refinement target.

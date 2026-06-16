@@ -20,8 +20,8 @@ export
 include("Utilities.jl")
 include("TCStruct.jl")
 include("Initialization.jl")
+include("WindowChange.jl")
 include("Refinement.jl")
 include("MakieInterface.jl")
-include("Buttons.jl")
 
 end # module AdaptiveVisualization
