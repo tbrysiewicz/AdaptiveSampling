@@ -183,10 +183,10 @@ using AdaptiveVisualization
             verbose=false,
         )
 
-        fig = visualize(TC; refine_button=false)
+        fig = visualize(TC; buttons=false)
         @test fig isa AdaptiveVisualization.GLMakie.Figure
 
-        fig = visualize(TC; refine_button=true, plot_triangle_edges=true)
+        fig = visualize(TC; buttons=true, plot_triangle_edges=true)
         @test fig isa AdaptiveVisualization.GLMakie.Figure
 
         complete_TC = TriangulationCache(disk_indicator;
@@ -208,7 +208,7 @@ using AdaptiveVisualization
         )
         @test is_discrete(AdaptiveVisualization.output_values(categorical_TC))
 
-        fig = visualize(categorical_TC; refine_button=false, plot_triangle_edges=true)
+        fig = visualize(categorical_TC; buttons=false, plot_triangle_edges=true)
         @test fig isa AdaptiveVisualization.GLMakie.Figure
     end
 

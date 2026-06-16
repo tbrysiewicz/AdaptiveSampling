@@ -1,37 +1,39 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 300" role="img" aria-labelledby="title desc">
-  <title id="title">Adaptive refinement loop</title>
-  <desc id="desc">The package samples a batched oracle, builds a Delaunay triangulation, marks incomplete triangles, and refines only where needed.</desc>
-  <rect width="900" height="300" fill="#ffffff"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 300" role="img" aria-labelledby="title desc">
+  <title id="title">Flowchart for refining a TriangulationCache</title>
+  <desc id="desc">Refinement inserts points in incomplete triangles, evaluates the function, updates the Delaunay triangulation, and classifies triangles.</desc>
+  <rect width="920" height="300" fill="#ffffff"/>
   <defs>
     <marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
       <path d="M0,0 L10,4 L0,8 Z" fill="#30343b"/>
     </marker>
   </defs>
   <g font-family="Inter, Arial, sans-serif">
-    <g transform="translate(42 68)">
-      <rect width="176" height="108" rx="10" fill="#f4f7fb" stroke="#b9c4d4"/>
-      <text x="88" y="42" text-anchor="middle" font-size="19" font-weight="700" fill="#1b1f27">sample</text>
-      <text x="88" y="72" text-anchor="middle" font-size="14" fill="#485263">batched oracle calls</text>
+    <g transform="translate(36 72)">
+      <rect width="172" height="108" rx="8" fill="#f4f7fb" stroke="#b9c4d4"/>
+      <text x="86" y="36" text-anchor="middle" font-size="18" font-weight="700" fill="#1b1f27">insert points</text>
+      <text x="86" y="64" text-anchor="middle" font-size="14" fill="#485263">in incomplete</text>
+      <text x="86" y="84" text-anchor="middle" font-size="14" fill="#485263">triangles</text>
     </g>
-    <g transform="translate(262 68)">
-      <rect width="176" height="108" rx="10" fill="#fdf4e8" stroke="#e4b269"/>
-      <text x="88" y="42" text-anchor="middle" font-size="19" font-weight="700" fill="#1b1f27">triangulate</text>
-      <text x="88" y="72" text-anchor="middle" font-size="14" fill="#65513b">Delaunay mesh</text>
+    <g transform="translate(260 72)">
+      <rect width="172" height="108" rx="8" fill="#fdf4e8" stroke="#e4b269"/>
+      <text x="86" y="44" text-anchor="middle" font-size="18" font-weight="700" fill="#1b1f27">evaluate</text>
+      <text x="86" y="74" text-anchor="middle" font-size="14" fill="#65513b">function values</text>
     </g>
-    <g transform="translate(482 68)">
-      <rect width="176" height="108" rx="10" fill="#f3f9f1" stroke="#91bd83"/>
-      <text x="88" y="42" text-anchor="middle" font-size="19" font-weight="700" fill="#1b1f27">classify</text>
-      <text x="88" y="72" text-anchor="middle" font-size="14" fill="#496042">complete vs incomplete</text>
+    <g transform="translate(484 72)">
+      <rect width="172" height="108" rx="8" fill="#f3f9f1" stroke="#91bd83"/>
+      <text x="86" y="39" text-anchor="middle" font-size="18" font-weight="700" fill="#1b1f27">Triangulate</text>
+      <text x="86" y="69" text-anchor="middle" font-size="14" fill="#496042">Via Delaunay triangulation</text>
     </g>
-    <g transform="translate(702 68)">
-      <rect width="156" height="108" rx="10" fill="#f8f1fb" stroke="#c99adb"/>
-      <text x="78" y="42" text-anchor="middle" font-size="19" font-weight="700" fill="#1b1f27">refine</text>
-      <text x="78" y="72" text-anchor="middle" font-size="14" fill="#60456c">large incomplete cells</text>
+    <g transform="translate(708 72)">
+      <rect width="172" height="108" rx="8" fill="#f7f2fa" stroke="#bd9bd0"/>
+      <text x="86" y="34" text-anchor="middle" font-size="18" font-weight="700" fill="#1b1f27">classify</text>
+      <text x="86" y="62" text-anchor="middle" font-size="14" fill="#60456c">which triangles</text>
+      <text x="86" y="82" text-anchor="middle" font-size="14" fill="#60456c">are complete</text>
     </g>
-    <path d="M226 122 H252" stroke="#30343b" stroke-width="2.5" marker-end="url(#arrow)"/>
-    <path d="M446 122 H472" stroke="#30343b" stroke-width="2.5" marker-end="url(#arrow)"/>
-    <path d="M666 122 H692" stroke="#30343b" stroke-width="2.5" marker-end="url(#arrow)"/>
-    <path d="M780 184 C760 250 160 250 132 184" fill="none" stroke="#30343b" stroke-width="2.5" marker-end="url(#arrow)"/>
-    <text x="456" y="264" text-anchor="middle" font-size="16" fill="#485263">keep cached values; insert only new points</text>
+    <path d="M218 126 H250" stroke="#30343b" stroke-width="2.4" marker-end="url(#arrow)"/>
+    <path d="M442 126 H474" stroke="#30343b" stroke-width="2.4" marker-end="url(#arrow)"/>
+    <path d="M666 126 H698" stroke="#30343b" stroke-width="2.4" marker-end="url(#arrow)"/>
+    <path d="M794 188 C754 258 166 258 122 188" fill="none" stroke="#30343b" stroke-width="2.4" marker-end="url(#arrow)"/>
+    <text x="460" y="270" text-anchor="middle" font-size="16" fill="#485263">Flowchart for refining a TriangulationCache</text>
   </g>
 </svg>

@@ -9,6 +9,8 @@ include(joinpath(@__DIR__, "..", "test", "HCtests.jl"))
 const ASSET_DIR = joinpath(@__DIR__, "assets")
 const README_FIGURE_RESOLUTION = 144
 const README_FIGURE_REFINEMENT_PASSES = 5
+const KURAMOTO_GRID_RESOLUTIONS = [5^2, 10^2, 40^2, 50^2, 100^2]
+const KURAMOTO_GRID_RS = 0:5
 mkpath(ASSET_DIR)
 
 function save_readme_figure(fig, filename)
@@ -54,10 +56,11 @@ function disk_indicator_figure()
     )
     refine_readme_figure!(TC)
     return visualize(TC;
-        refine_button=false,
+        buttons=false,
         plot_triangle_edges=true,
         figure_size=(900, 700),
         legend_title="region",
+        show_legend=false,
     )
 end
 
@@ -72,40 +75,72 @@ function categorical_figure()
     )
     refine_readme_figure!(TC)
     return visualize(TC;
-        refine_button=false,
+        buttons=false,
         plot_triangle_edges=true,
         figure_size=(900, 700),
         legend_title="class",
+        show_legend=false,
     )
 end
 
-function kuramoto_figure()
+function kuramoto_figure(; resolution=README_FIGURE_RESOLUTION, refinement_passes=README_FIGURE_REFINEMENT_PASSES, title=nothing)
     Random.seed!(3)
     F = KuramotoModel(3)
     f = real_solution_function(F)
     TC = TriangulationCache(f;
-        xlims=[-1.5, 1.5],
-        ylims=[-1.5, 1.5],
-        resolution=README_FIGURE_RESOLUTION,
+        xlims=[-1, 1],
+        ylims=[-1, 1],
+        resolution=resolution,
         strategy=:sierpinski,
+        min_refinement_area=0,
         verbose=false,
     )
-    refine_readme_figure!(TC)
+    for _ in 1:refinement_passes
+        refine!(TC; verbose=false)
+    end
+    figure_title = if title === :oracle_summary
+        "($(resolution),$(refinement_passes)) - total oracle evaluations = $(length(AdaptiveVisualization.function_values(TC)))"
+    elseif title === nothing
+        ""
+    else
+        title
+    end
     return visualize(TC;
-        refine_button=false,
-        plot_triangle_edges=true,
+        buttons=false,
+        plot_triangle_edges=false,
         figure_size=(900, 700),
         legend_title="nreal",
+        show_legend=false,
+        xlabel="",
+        ylabel="",
+        title=figure_title,
+        titlesize=27,
     )
+end
+
+function kuramoto_grid()
+    paths = String[]
+    for resolution in KURAMOTO_GRID_RESOLUTIONS
+        for r in KURAMOTO_GRID_RS
+            filename = "kuramoto-n$(resolution)-r$(r).png"
+            push!(paths, save_readme_figure(kuramoto_figure(;
+                resolution=resolution,
+                refinement_passes=r,
+                title=:oracle_summary,
+            ), filename))
+        end
+    end
+    return paths
 end
 
 const FIGURE_BUILDERS = Dict(
     "disk" => () -> save_readme_figure(disk_indicator_figure(), "disk-indicator.png"),
     "categorical" => () -> save_readme_figure(categorical_figure(), "categorical-inside-outside.png"),
     "kuramoto" => () -> save_readme_figure(kuramoto_figure(), "kuramoto-real-solutions.png"),
+    "kuramoto-grid" => kuramoto_grid,
 )
 
-requested_figures = isempty(ARGS) ? ["disk", "categorical", "kuramoto"] : ARGS
+requested_figures = isempty(ARGS) ? ["kuramoto-grid"] : ARGS
 for name in requested_figures
     haskey(FIGURE_BUILDERS, name) || error("Unknown README figure '$name'. Use one of $(sort(collect(keys(FIGURE_BUILDERS)))).")
     FIGURE_BUILDERS[name]()

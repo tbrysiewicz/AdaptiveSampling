@@ -11,8 +11,8 @@ TC = TriangulationCache(f;
 )
 
 #Visualizatoin works with some kwargs given
-fig = visualize(TC; refine_button = false)
-fig = visualize(TC; refine_button = true, plot_triangle_edges = true)
+fig = visualize(TC; buttons = false)
+fig = visualize(TC; buttons = true, plot_triangle_edges = true)
 #Display runs
 display(fig)
 

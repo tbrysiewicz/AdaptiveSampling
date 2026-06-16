@@ -204,6 +204,7 @@ function draw_triangulation!(fig, ax, TC::TriangulationCache; kwargs...)
     plot_log_transform = get(kwargs, :plot_log_transform, false)
     plot_all_triangles = get(kwargs, :plot_all_triangles, !is_discrete(TC))
     colormap = get(kwargs, :colormap, default_continuous_colormap())
+    show_legend = get(kwargs, :show_legend, true)
     legend_max_values = get(kwargs, :legend_max_values, TRIANGULATION_CACHE_DEFAULT_LEGEND_LIMIT)
     discrete_legend = get(kwargs, :discrete_legend, nothing)
     legend_title = get(kwargs, :legend_title, "value")
@@ -238,8 +239,10 @@ function draw_triangulation!(fig, ax, TC::TriangulationCache; kwargs...)
         plot_triangle_edges && add_triangle_edges!(ax, decorations, vertices, faces; color=triangle_edge_color, linewidth=triangle_edge_linewidth)
         elements = [GLMakie.PolyElement(color=color, strokecolor=color) for color in category_colors]
         labels = value_label.(categories)
-        legend = add_value_legend!(fig, elements, labels, legend_title)
-        legend === nothing || push!(decorations, legend)
+        if show_legend
+            legend = add_value_legend!(fig, elements, labels, legend_title)
+            legend === nothing || push!(decorations, legend)
+        end
         return (plot=plt, decorations=decorations)
     end
 
@@ -247,7 +250,7 @@ function draw_triangulation!(fig, ax, TC::TriangulationCache; kwargs...)
     colorrange = numeric_continuous_color_range(TC, vertex_values; plot_log_transform=plot_log_transform)
     plt = GLMakie.mesh!(ax, vertices, faces; color=continuous_values, colormap=colormap, colorrange=colorrange, nan_color=:black, shading=false)
     plot_triangle_edges && add_triangle_edges!(ax, decorations, vertices, faces; color=triangle_edge_color, linewidth=triangle_edge_linewidth)
-    push!(decorations, GLMakie.Colorbar(fig[1, 2], plt))
+    show_legend && push!(decorations, GLMakie.Colorbar(fig[1, 2], plt))
     return (plot=plt, decorations=decorations)
 end
 
@@ -444,7 +447,7 @@ end
 Render a `TriangulationCache` using GLMakie.
 
 Useful keyword arguments:
-- `refine_button`: add interactive refinement controls, default `true`.
+- `buttons`: add interactive refinement controls, default `true`.
 - `button_refinement_passes`: number of refinement passes per button click.
 - `navigation_step`: arrow-button pan amount as a fraction of window size.
 - `zoom_step`: zoom amount as a fraction of window size.
@@ -453,28 +456,38 @@ Useful keyword arguments:
 - `max_area_refine_controls`: add exponent slider and Fully Refine button.
 - `max_area_slider_range`: integer exponents for `window_area * 1e-X`, default `2:6`.
 - `figure_size`: Makie figure size, default `(900, 900)`.
+- `xlabel`: axis x label, default `"x"`.
+- `ylabel`: axis y label, default `"y"`.
+- `title`: axis title, default `""`.
+- `titlesize`: axis title font size, default Makie axis title size.
 - `plot_all_triangles`: include incomplete triangles in the colored mesh.
 - `plot_triangle_edges`: overlay thin triangle edges, default `false`.
 - `triangle_edge_color`: edge overlay color.
 - `triangle_edge_linewidth`: edge overlay line width.
+- `show_legend`: show legends and colorbars, default `true`.
 - interactive figures include an Edges button that toggles edge visibility.
 - `legend_max_values`: categorical legend threshold, default `20`.
 - `discrete_legend`: force or disable categorical legend behavior.
 """
 function visualize(TC::TriangulationCache; kwargs...)::GLMakie.Figure
-    refine_button = get(kwargs, :refine_button, true)
+    buttons = get(kwargs, :buttons, true)
     button_refinement_passes = get(kwargs, :button_refinement_passes, 1)
 
-    figure_size = get(kwargs, :figure_size, refine_button ? (1300, 900) : (900, 900))
+    figure_size = get(kwargs, :figure_size, buttons ? (1300, 900) : (900, 900))
+    xlabel = get(kwargs, :xlabel, "x")
+    ylabel = get(kwargs, :ylabel, "y")
+    title = get(kwargs, :title, "")
+    titlesize = get(kwargs, :titlesize, nothing)
     fig = GLMakie.Figure(size=figure_size)
-    ax = GLMakie.Axis(fig[1, 1]; xlabel="x", ylabel="y", aspect=GLMakie.DataAspect(), backgroundcolor=:black)
+    axis_kwargs = titlesize === nothing ? (; xlabel=xlabel, ylabel=ylabel, title=title) : (; xlabel=xlabel, ylabel=ylabel, title=title, titlesize=titlesize)
+    ax = GLMakie.Axis(fig[1, 1]; axis_kwargs..., aspect=GLMakie.DataAspect(), backgroundcolor=:black)
     GLMakie.colsize!(fig.layout, 1, GLMakie.Relative(1))
     GLMakie.rowsize!(fig.layout, 1, GLMakie.Relative(1))
     set_axis_window!(ax, TC)
 
     drawn_ref = Ref{Any}(draw_triangulation!(fig, ax, TC; kwargs...))
 
-    refine_button && add_refine_button!(fig, ax, TC, drawn_ref; button_refinement_passes=button_refinement_passes, kwargs...)
+    buttons && add_refine_button!(fig, ax, TC, drawn_ref; button_refinement_passes=button_refinement_passes, kwargs...)
 
     return fig
 end
@@ -483,23 +496,52 @@ end
     visualize(function_oracle::Function; kwargs...) -> (TriangulationCache, GLMakie.Figure)
 
 Construct, refine, display, and return a `TriangulationCache` and its Makie
-figure. `total_resolution` is interpreted as the total oracle-call budget,
-including the initial mesh.
+figure. `total_resolution` is the overall oracle-call budget. If
+`initial_resolution` is supplied, it controls the initialization mesh size;
+otherwise initialization uses one quarter of `total_resolution`. Refinement
+then uses the remaining budget.
 """
-function visualize(function_oracle::Function; total_resolution=nothing, max_refinement_area=nothing, verbose=true, kwargs...)
-    total_given = total_resolution !== nothing
-    resolved_total = total_given ? Int(total_resolution) : TRIANGULATION_CACHE_DEFAULT_TOTAL_RESOLUTION
-    TC = TriangulationCache(function_oracle; resolution=resolved_total, verbose=verbose, kwargs...)
+const TRIANGULATION_CACHE_VISUALIZE_KEYWORDS = Set([
+    :xlims,
+    :ylims,
+    :strategy,
+    :min_refinement_area,
+    :is_complete,
+])
+
+function visualize(function_oracle::Function; total_resolution=TRIANGULATION_CACHE_DEFAULT_TOTAL_RESOLUTION, initial_resolution=nothing, resolution=nothing, max_refinement_area=nothing, verbose=true, kwargs...)
+    if resolution !== nothing
+        total_resolution == TRIANGULATION_CACHE_DEFAULT_TOTAL_RESOLUTION || error("Use `total_resolution`, not both `resolution` and `total_resolution`.")
+        total_resolution = resolution
+    end
+
+    resolved_total = Int(total_resolution)
+    resolved_total >= 4 || error("total_resolution must be at least 4.")
+    resolved_initial = initial_resolution === nothing ? max(4, round(Int, 0.25 * resolved_total)) : Int(initial_resolution)
+    resolved_initial >= 4 || error("initial_resolution must be at least 4.")
+    resolved_initial <= resolved_total || error("initial_resolution must be less than or equal to total_resolution.")
+    refinement_budget = max(0, resolved_total - resolved_initial)
+
+    cache_kwargs = Dict{Symbol,Any}()
+    plot_kwargs = Dict{Symbol,Any}()
+    for (key, value) in kwargs
+        if key in TRIANGULATION_CACHE_VISUALIZE_KEYWORDS
+            cache_kwargs[key] = value
+        else
+            plot_kwargs[key] = value
+        end
+    end
+
+    TC = TriangulationCache(function_oracle; resolution=resolved_initial, verbose=verbose, cache_kwargs...)
     if max_refinement_area !== nothing
-        total_given && println("Warning: max_refinement_area was supplied, so total_resolution is ignored after the initial mesh.")
         refine_to_max_area!(TC, Float64(max_refinement_area); verbose=verbose)
         TC.oracle_budget = nothing
     else
-        TC.oracle_budget = max(0, resolved_total - TC.total_oracle_calls)
+        TC.oracle_budget = refinement_budget
         refine_until_budget_exhausted!(TC; verbose=verbose)
         TC.oracle_budget = nothing
     end
-    fig = visualize(TC; kwargs...)
+    fig = visualize(TC; plot_kwargs...)
     display(fig)
     return TC, fig
 end
