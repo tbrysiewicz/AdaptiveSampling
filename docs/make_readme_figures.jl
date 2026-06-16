@@ -95,7 +95,7 @@ function kuramoto_figure()
         refine_button=false,
         plot_triangle_edges=true,
         figure_size=(900, 700),
-        legend_title="# real solutions",
+        legend_title="nreal",
     )
 end
 
