@@ -47,7 +47,9 @@ used for initialization and the rest is used for adaptive refinement; pass
 move around the parameter window while keeping previously computed function
 values available.
 
-<img src="docs/assets/disk-indicator.png" alt="Adaptive sampling of the disk indicator quick-start function" width="450">
+<p align="center">
+  <img src="docs/assets/disk-indicator.png" alt="Adaptive sampling of the disk indicator quick-start function" width="450">
+</p>
 
 ## Pipeline
 
@@ -150,45 +152,16 @@ TC, fig = visualize(f;
 )
 ```
 
-<img src="docs/assets/continuous-quadratic.png" alt="Adaptive sampling of x^2 + y^2 - x" width="450">
+<p align="center">
+  <img src="docs/assets/continuous-quadratic.png" alt="Adaptive sampling of x^2 + y^2 - x" width="450">
+</p>
 
 For polynomial systems, the oracle can also return a continuous statistic of
-the complex solutions. The following `dietmaier_function` solves the system at
-each sampled parameter point and returns the minimum nonzero L1 norm of the
-imaginary parts across the solution set.
-
-```julia
-function dietmaier_function(
-        F::System;
-        plane_points = [randn(Float64, nparameters(F)) for _ in 1:3],
-        start_parameters = nothing,
-        imaginary_zero_atol = 1e-10)
-
-    G = nparameters(F)>2 ? restrict(F, plane_points) : F
-    P = start_parameters === nothing ? randn(ComplexF64, nparameters(G)) : start_parameters
-    start_solutions = solutions(solve(G; target_parameters=P))
-
-    function minimum_nonzero_imaginary_l1_norm(result)
-        norms = [sum(abs, imag.(s)) for s in solutions(result)]
-        nonzero_norms = filter(>(imaginary_zero_atol), norms)
-        return isempty(nonzero_norms) ? 0.0 : minimum(nonzero_norms)
-    end
-
-    function imaginary_l1_norm(points)
-        results = solve(G, start_solutions;
-            start_parameters=P,
-            target_parameters=points,
-        )
-
-        return [
-            minimum_nonzero_imaginary_l1_norm(result_from_many_solve_item(R))
-            for R in results
-        ]
-    end
-
-    return imaginary_l1_norm
-end
-```
+the complex solutions. The `dietmaier_function` oracle solves the system at
+each sampled parameter point, computes the L1 norm of the imaginary parts of
+each complex solution, discards values below a numerical zero tolerance, and
+returns the minimum remaining norm. Small values indicate parameters where at
+least one solution is nearly real.
 
 For the `n = 3` Kuramoto model:
 
@@ -208,7 +181,9 @@ TC, fig = visualize(f;
 )
 ```
 
-<img src="docs/assets/dietmaier-kuramoto.png" alt="Adaptive sampling of the Kuramoto imaginary-part L1 norm" width="450">
+<p align="center">
+  <img src="docs/assets/dietmaier-kuramoto.png" alt="Adaptive sampling of the Kuramoto imaginary-part L1 norm" width="450">
+</p>
 
 Regenerate the README figures with:
 
