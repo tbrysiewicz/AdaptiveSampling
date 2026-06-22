@@ -156,6 +156,37 @@ function result_from_many_solve_item(item)
     return first(item)
 end
 
+function dietmaier_function(
+        F::System;
+        plane_points = [randn(Float64, nparameters(F)) for _ in 1:3],
+        start_parameters = nothing,
+        imaginary_zero_atol = 1e-10)
+
+    G = nparameters(F)>2 ? restrict(F, plane_points) : F
+    P = start_parameters === nothing ? randn(ComplexF64, nparameters(G)) : start_parameters
+    start_solutions = solutions(solve(G; target_parameters=P))
+
+    function minimum_nonzero_imaginary_l1_norm(result)
+        norms = [sum(abs, imag.(s)) for s in solutions(result)]
+        nonzero_norms = filter(>(imaginary_zero_atol), norms)
+        return isempty(nonzero_norms) ? 0.0 : minimum(nonzero_norms)
+    end
+
+    function imaginary_l1_norm(points)
+        results = solve(G, start_solutions;
+            start_parameters=P,
+            target_parameters=points,
+        )
+
+        return [
+            minimum_nonzero_imaginary_l1_norm(result_from_many_solve_item(R))
+            for R in results
+        ]
+    end
+
+    return imaginary_l1_norm
+end
+
 function real_solution_function(
         F::System;
         plane_points = [randn(Float64, nparameters(F)) for _ in 1:3],

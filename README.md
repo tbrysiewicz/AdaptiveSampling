@@ -34,6 +34,8 @@ TC, fig = visualize(f;
     total_resolution = 1000,
     strategy = :sierpinski,
     buttons = true,
+    legend_title = "value",
+    title = "Continuous scalar field",
 )
 ```
 
@@ -129,6 +131,84 @@ initialization resolution `n` and `r` refinement passes.
     </tr>
   </tbody>
 </table>
+
+## Non-discrete Functions
+
+The sampled function does not need to be discrete or categorical. Continuous
+real-valued functions are visualized with interpolated triangle colors, so the
+same refinement workflow can be used for scalar fields such as:
+
+```julia
+f = (x, y) -> x^2 + y^2 - x
+
+TC, fig = visualize(f;
+    xlims = [-2, 2],
+    ylims = [-2, 2],
+    total_resolution = 1000,
+    strategy = :sierpinski,
+    buttons = true,
+)
+```
+
+<img src="docs/assets/continuous-quadratic.png" alt="Adaptive sampling of x^2 + y^2 - x" width="450">
+
+For polynomial systems, the oracle can also return a continuous statistic of
+the complex solutions. The following `dietmaier_function` solves the system at
+each sampled parameter point and returns the minimum nonzero L1 norm of the
+imaginary parts across the solution set.
+
+```julia
+function dietmaier_function(
+        F::System;
+        plane_points = [randn(Float64, nparameters(F)) for _ in 1:3],
+        start_parameters = nothing,
+        imaginary_zero_atol = 1e-10)
+
+    G = nparameters(F)>2 ? restrict(F, plane_points) : F
+    P = start_parameters === nothing ? randn(ComplexF64, nparameters(G)) : start_parameters
+    start_solutions = solutions(solve(G; target_parameters=P))
+
+    function minimum_nonzero_imaginary_l1_norm(result)
+        norms = [sum(abs, imag.(s)) for s in solutions(result)]
+        nonzero_norms = filter(>(imaginary_zero_atol), norms)
+        return isempty(nonzero_norms) ? 0.0 : minimum(nonzero_norms)
+    end
+
+    function imaginary_l1_norm(points)
+        results = solve(G, start_solutions;
+            start_parameters=P,
+            target_parameters=points,
+        )
+
+        return [
+            minimum_nonzero_imaginary_l1_norm(result_from_many_solve_item(R))
+            for R in results
+        ]
+    end
+
+    return imaginary_l1_norm
+end
+```
+
+For the `n = 3` Kuramoto model:
+
+```julia
+Random.seed!(3)
+F = KuramotoModel(3)
+f = dietmaier_function(F)
+
+TC, fig = visualize(f;
+    xlims = [-1, 1],
+    ylims = [-1, 1],
+    total_resolution = 1000,
+    strategy = :sierpinski,
+    legend_title = "minimum nonzero imaginary L1 norm",
+    title = "Kuramoto: Dietmaier Function",
+    plot_log_transform = true,
+)
+```
+
+<img src="docs/assets/dietmaier-kuramoto.png" alt="Adaptive sampling of the Kuramoto imaginary-part L1 norm" width="450">
 
 Regenerate the README figures with:
 

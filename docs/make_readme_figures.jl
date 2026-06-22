@@ -83,6 +83,28 @@ function categorical_figure()
     )
 end
 
+function continuous_quadratic_figure()
+    f(x, y) = x^2 + y^2 - x
+    TC = TriangulationCache(f;
+        xlims=[-2, 2],
+        ylims=[-2, 2],
+        resolution=README_FIGURE_RESOLUTION,
+        strategy=:sierpinski,
+        verbose=false,
+    )
+    refine_readme_figure!(TC)
+    return visualize(TC;
+        buttons=false,
+        plot_triangle_edges=false,
+        figure_size=(900, 700),
+        legend_title="value",
+        show_legend=true,
+        xlabel="",
+        ylabel="",
+        title="Continuous scalar field",
+    )
+end
+
 function kuramoto_figure(; resolution=README_FIGURE_RESOLUTION, refinement_passes=README_FIGURE_REFINEMENT_PASSES, title=nothing)
     Random.seed!(3)
     F = KuramotoModel(3)
@@ -118,6 +140,36 @@ function kuramoto_figure(; resolution=README_FIGURE_RESOLUTION, refinement_passe
     )
 end
 
+function dietmaier_kuramoto_figure(;
+        resolution=72,
+        refinement_passes=4)
+    Random.seed!(3)
+    F = KuramotoModel(3)
+    f = dietmaier_function(F)
+    TC = TriangulationCache(f;
+        xlims=[-1, 1],
+        ylims=[-1, 1],
+        resolution=resolution,
+        strategy=:sierpinski,
+        min_refinement_area=0,
+        verbose=false,
+    )
+    for _ in 1:refinement_passes
+        refine!(TC; verbose=false)
+    end
+    return visualize(TC;
+        buttons=false,
+        plot_triangle_edges=false,
+        figure_size=(900, 700),
+        legend_title="minimum nonzero imaginary L1 norm",
+        show_legend=true,
+        xlabel="",
+        ylabel="",
+        title="Kuramoto: Dietmaier Function",
+        plot_log_transform=true,
+    )
+end
+
 function kuramoto_grid()
     paths = String[]
     for resolution in KURAMOTO_GRID_RESOLUTIONS
@@ -136,11 +188,15 @@ end
 const FIGURE_BUILDERS = Dict(
     "disk" => () -> save_readme_figure(disk_indicator_figure(), "disk-indicator.png"),
     "categorical" => () -> save_readme_figure(categorical_figure(), "categorical-inside-outside.png"),
+    "continuous" => () -> save_readme_figure(continuous_quadratic_figure(), "continuous-quadratic.png"),
     "kuramoto" => () -> save_readme_figure(kuramoto_figure(), "kuramoto-real-solutions.png"),
+    "dietmaier-kuramoto" => () -> save_readme_figure(dietmaier_kuramoto_figure(), "dietmaier-kuramoto.png"),
     "kuramoto-grid" => kuramoto_grid,
 )
 
-requested_figures = isempty(ARGS) ? ["kuramoto-grid"] : ARGS
+const DEFAULT_README_FIGURES = ["disk", "continuous", "dietmaier-kuramoto", "kuramoto-grid"]
+
+requested_figures = isempty(ARGS) ? DEFAULT_README_FIGURES : ARGS
 for name in requested_figures
     haskey(FIGURE_BUILDERS, name) || error("Unknown README figure '$name'. Use one of $(sort(collect(keys(FIGURE_BUILDERS)))).")
     FIGURE_BUILDERS[name]()
