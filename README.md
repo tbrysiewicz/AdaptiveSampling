@@ -53,15 +53,16 @@ values available.
 
 ## Pipeline
 
+Flowchart for initializing a TriangulationCache: 
+
 ![Flowchart for initializing a TriangulationCache](docs/initialization-flow.svg)
-
-Flowchart for initializing a TriangulationCache
-
-![Flowchart for adaptive refinement](docs/refinement-loop.svg)
 
 Each refinement pass inserts points in incomplete triangles, evaluates the
 function at the new points, updates the Delaunay triangulation, and classifies
 the resulting triangles as complete or incomplete.
+
+![Flowchart for adaptive refinement](docs/refinement-loop.svg)
+
 
 ## Kuramoto Example
 
