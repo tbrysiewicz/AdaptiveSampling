@@ -154,7 +154,17 @@ using AdaptiveVisualization
         @test order == [5, 9]
 
         order = AdaptiveVisualization.stable_plot_value_order!(TC, [3, 5])
-        @test order == [5, 9, 3]
+        @test order == [3, 5, 9]
+
+        label_TC = TriangulationCache(points -> [p[1] < 0 ? "inside" : "outside" for p in points];
+            xlims=[-1, 1],
+            ylims=[-1, 1],
+            resolution=9,
+            verbose=false,
+        )
+
+        order = AdaptiveVisualization.stable_plot_value_order!(label_TC, ["border", "inside"])
+        @test order == ["inside", "outside", "border"]
     end
 
     @testset "Categorical complete triangle plotting" begin
@@ -186,7 +196,7 @@ using AdaptiveVisualization
         fig = visualize(TC; buttons=false)
         @test fig isa AdaptiveVisualization.GLMakie.Figure
 
-        fig = visualize(TC; buttons=true, plot_triangle_edges=true)
+        fig = visualize(TC; buttons=true, edges=true)
         @test fig isa AdaptiveVisualization.GLMakie.Figure
 
         complete_TC = TriangulationCache(disk_indicator;
@@ -208,7 +218,7 @@ using AdaptiveVisualization
         )
         @test is_discrete(AdaptiveVisualization.output_values(categorical_TC))
 
-        fig = visualize(categorical_TC; buttons=false, plot_triangle_edges=true)
+        fig = visualize(categorical_TC; buttons=false, edges=true)
         @test fig isa AdaptiveVisualization.GLMakie.Figure
     end
 

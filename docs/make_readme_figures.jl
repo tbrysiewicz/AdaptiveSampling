@@ -57,7 +57,7 @@ function disk_indicator_figure()
     refine_readme_figure!(TC)
     return visualize(TC;
         buttons=false,
-        plot_triangle_edges=true,
+        edges=true,
         figure_size=(900, 700),
         legend_title="region",
         show_legend=false,
@@ -76,7 +76,7 @@ function categorical_figure()
     refine_readme_figure!(TC)
     return visualize(TC;
         buttons=false,
-        plot_triangle_edges=true,
+        edges=true,
         figure_size=(900, 700),
         legend_title="class",
         show_legend=false,
@@ -95,7 +95,7 @@ function continuous_quadratic_figure()
     refine_readme_figure!(TC)
     return visualize(TC;
         buttons=false,
-        plot_triangle_edges=false,
+        edges=false,
         figure_size=(900, 700),
         legend_title="value",
         show_legend=true,
@@ -129,7 +129,7 @@ function kuramoto_figure(; resolution=README_FIGURE_RESOLUTION, refinement_passe
     end
     return visualize(TC;
         buttons=false,
-        plot_triangle_edges=false,
+        edges=false,
         figure_size=(900, 700),
         legend_title="nreal",
         show_legend=false,
@@ -159,7 +159,7 @@ function dietmaier_kuramoto_figure(;
     end
     return visualize(TC;
         buttons=false,
-        plot_triangle_edges=false,
+        edges=false,
         figure_size=(900, 700),
         legend_title="minimum nonzero imaginary L1 norm",
         show_legend=true,

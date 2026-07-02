@@ -50,9 +50,11 @@ end
 # Add a value legend.
 function add_value_legend!(fig, elements, labels, title)
     isempty(elements) && return nothing
-    return GLMakie.Legend(fig[1, 1], elements, labels, title;
-        tellwidth=false, tellheight=false, halign=:right, valign=:top,
+    legend = GLMakie.Legend(fig[1, 2], elements, labels, title;
+        tellwidth=true, tellheight=false,
         margin=(10, 10, 10, 10))
+    GLMakie.colsize!(fig.layout, 2, GLMakie.Auto())
+    return legend
 end
 
 ############################
@@ -101,11 +103,17 @@ function append_missing_values!(values::Vector{Any}, candidates)
     return values
 end
 
+function sort_numeric_values!(values::Vector{Any})
+    all(value -> value isa Real, values) || return values
+    return sort!(values)
+end
+
 function stable_plot_value_order!(TC::TriangulationCache, visible_values; plot_log_transform=false)
     values = get!(TC.plot_value_order, Bool(plot_log_transform), Any[])
     cached_values = (cached_plot_value(value; plot_log_transform=plot_log_transform) for value in output_values(TC))
     append_missing_values!(values, cached_values)
     append_missing_values!(values, visible_values)
+    sort_numeric_values!(values)
     return values
 end
 
@@ -208,7 +216,7 @@ function draw_triangulation!(fig, ax, TC::TriangulationCache; kwargs...)
     legend_max_values = get(kwargs, :legend_max_values, TRIANGULATION_CACHE_DEFAULT_LEGEND_LIMIT)
     discrete_legend = get(kwargs, :discrete_legend, nothing)
     legend_title = get(kwargs, :legend_title, "value")
-    plot_triangle_edges = get(kwargs, :plot_triangle_edges, false)
+    plot_triangle_edges = get(kwargs, :edges, get(kwargs, :plot_triangle_edges, false))
     triangle_edge_color = get(kwargs, :triangle_edge_color, GLMakie.RGBAf(0, 0, 0, 0.35))
     triangle_edge_linewidth = get(kwargs, :triangle_edge_linewidth, 0.5)
     decorations = Any[]
@@ -350,19 +358,20 @@ function add_refine_button!(
     down_button = GLMakie.Button(controls[1, 5]; label="↓", tellwidth=false, width=42, height=30)
     zoom_in_button = GLMakie.Button(controls[1, 6]; label="Zoom +", tellwidth=false, width=84, height=30)
     zoom_out_button = GLMakie.Button(controls[1, 7]; label="Zoom -", tellwidth=false, width=84, height=30)
-    edge_button_column = max_area_refine_controls ? 11 : 8
-    edge_button = GLMakie.Button(controls[1, edge_button_column]; label="Edges", tellwidth=false, width=84, height=30)
-    edge_visible = Ref(Bool(plot_triangle_edges))
+    edge_button = GLMakie.Button(controls[1, 8]; label="Edges", tellwidth=false, width=84, height=30)
+    edge_visible = Ref(Bool(get(kwargs, :edges, plot_triangle_edges)))
     GLMakie.rowgap!(fig.layout, 8)
-    GLMakie.rowsize!(fig.layout, 2, GLMakie.Fixed(52))
+    GLMakie.rowsize!(fig.layout, 2, GLMakie.Fixed(max_area_refine_controls ? 92 : 52))
     GLMakie.rowsize!(controls, 1, GLMakie.Fixed(40))
+    max_area_refine_controls && GLMakie.rowsize!(controls, 2, GLMakie.Fixed(40))
+    GLMakie.rowgap!(controls, 4)
 
     redraw() = redraw_triangulation!(
         fig,
         ax,
         TC,
         drawn_ref;
-        plot_triangle_edges=edge_visible[],
+        edges=edge_visible[],
         triangle_edge_color=triangle_edge_color,
         triangle_edge_linewidth=triangle_edge_linewidth,
         kwargs...)
@@ -371,14 +380,14 @@ function add_refine_button!(
         slider_range = collect(max_area_slider_range)
         isempty(slider_range) && error("max_area_slider_range must contain at least one value.")
         slider_start = max_area_slider_start === nothing ? default_max_area_slider_start(TC, slider_range) : max_area_slider_start
-        max_area_slider = GLMakie.Slider(controls[1, 9]; range=slider_range, startvalue=slider_start, tellwidth=true, width=260)
+        max_area_slider = GLMakie.Slider(controls[2, 2:4]; range=slider_range, startvalue=slider_start, tellwidth=true, width=260)
         max_area_label = GLMakie.Label(
-            controls[1, 8],
+            controls[2, 1],
             GLMakie.lift(max_area_slider_label, max_area_slider.value);
             tellwidth=false,
             width=130,
         )
-        max_area_button = GLMakie.Button(controls[1, 10]; label="Fully Refine", tellwidth=false, width=120, height=30)
+        max_area_button = GLMakie.Button(controls[2, 5]; label="Fully Refine", tellwidth=false, width=120, height=30)
 
         GLMakie.on(max_area_button.clicks) do _
             refine_to_max_area!(TC, max_area_from_slider_exponent(TC, max_area_slider.value[]); verbose=verbose)
@@ -405,7 +414,7 @@ function add_refine_button!(
         navigation_initial_resolution=navigation_initial_resolution,
         navigation_refinement_budget=navigation_refinement_budget,
         verbose=verbose,
-        plot_triangle_edges=edge_visible[],
+        edges=edge_visible[],
         triangle_edge_color=triangle_edge_color,
         triangle_edge_linewidth=triangle_edge_linewidth,
         kwargs...)
@@ -458,10 +467,15 @@ Useful keyword arguments:
 - `figure_size`: Makie figure size, default `(900, 900)`.
 - `xlabel`: axis x label, default `"x"`.
 - `ylabel`: axis y label, default `"y"`.
+- `xlabelsize`: axis x label font size, default Makie axis label size.
+- `ylabelsize`: axis y label font size, default Makie axis label size.
+- `xticklabelsize`: axis x tick label font size, default Makie tick label size.
+- `yticklabelsize`: axis y tick label font size, default Makie tick label size.
 - `title`: axis title, default `""`.
 - `titlesize`: axis title font size, default Makie axis title size.
 - `plot_all_triangles`: include incomplete triangles in the colored mesh.
-- `plot_triangle_edges`: overlay thin triangle edges, default `false`.
+- `edges`: overlay thin triangle edges, default `false`.
+- `plot_triangle_edges`: deprecated alias for `edges`.
 - `triangle_edge_color`: edge overlay color.
 - `triangle_edge_linewidth`: edge overlay line width.
 - `show_legend`: show legends and colorbars, default `true`.
@@ -477,11 +491,17 @@ function visualize(TC::TriangulationCache; kwargs...)::GLMakie.Figure
     xlabel = get(kwargs, :xlabel, "x")
     ylabel = get(kwargs, :ylabel, "y")
     title = get(kwargs, :title, "")
-    titlesize = get(kwargs, :titlesize, nothing)
+    axis_kwargs = Dict{Symbol,Any}(
+        :xlabel => xlabel,
+        :ylabel => ylabel,
+        :title => title,
+    )
+    for key in (:xlabelsize, :ylabelsize, :xticklabelsize, :yticklabelsize, :titlesize)
+        haskey(kwargs, key) && (axis_kwargs[key] = kwargs[key])
+    end
     fig = GLMakie.Figure(size=figure_size)
-    axis_kwargs = titlesize === nothing ? (; xlabel=xlabel, ylabel=ylabel, title=title) : (; xlabel=xlabel, ylabel=ylabel, title=title, titlesize=titlesize)
     ax = GLMakie.Axis(fig[1, 1]; axis_kwargs..., aspect=GLMakie.DataAspect(), backgroundcolor=:black)
-    GLMakie.colsize!(fig.layout, 1, GLMakie.Relative(1))
+    GLMakie.colsize!(fig.layout, 1, GLMakie.Relative(0.82))
     GLMakie.rowsize!(fig.layout, 1, GLMakie.Relative(1))
     set_axis_window!(ax, TC)
 

@@ -12,7 +12,7 @@ TC = TriangulationCache(f;
 
 #Visualizatoin works with some kwargs given
 fig = visualize(TC; buttons = false)
-fig = visualize(TC; buttons = true, plot_triangle_edges = true)
+fig = visualize(TC; buttons = true, edges = true)
 #Display runs
 display(fig)
 
@@ -33,7 +33,7 @@ TC = TriangulationCache(f;
            ylims = [-2, 2],
            verbose = true,
            )
-visualize(TC, plot_triangle_edges = true)
+visualize(TC, edges = true)
 
 
 #continuous values work
@@ -43,4 +43,4 @@ TC = TriangulationCache(f;
            ylims = [-2, 2],
            verbose = true,
            )
-visualize(TC, plot_triangle_edges = true)
+visualize(TC, edges = true)

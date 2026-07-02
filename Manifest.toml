@@ -2,7 +2,7 @@
 
 julia_version = "1.12.6"
 manifest_format = "2.0"
-project_hash = "688779b6a926da2a03e2b30db36d57ff215abd84"
+project_hash = "c9ec2a83c0d136b47eb4a8cc64cb07b7e12c100c"
 
 [[deps.AbstractFFTs]]
 deps = ["LinearAlgebra"]
@@ -37,7 +37,7 @@ uuid = "35492f91-a3bd-45ad-95db-fcad7dcfedb7"
 version = "1.2.0"
 
 [[deps.AdaptiveSampling]]
-deps = ["DelaunayTriangulation", "GLMakie", "LinearAlgebra"]
+deps = ["DelaunayTriangulation", "GLMakie", "LinearAlgebra", "Revise"]
 path = "."
 uuid = "7f6f9940-4a32-4051-b522-c9b67e93c232"
 version = "0.5.0"
