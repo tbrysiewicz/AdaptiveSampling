@@ -363,7 +363,6 @@ function add_refine_button!(
     GLMakie.rowgap!(fig.layout, 8)
     GLMakie.rowsize!(fig.layout, 2, GLMakie.Fixed(max_area_refine_controls ? 92 : 52))
     GLMakie.rowsize!(controls, 1, GLMakie.Fixed(40))
-    max_area_refine_controls && GLMakie.rowsize!(controls, 2, GLMakie.Fixed(40))
     GLMakie.rowgap!(controls, 4)
 
     redraw() = redraw_triangulation!(
@@ -388,6 +387,7 @@ function add_refine_button!(
             width=130,
         )
         max_area_button = GLMakie.Button(controls[2, 5]; label="Fully Refine", tellwidth=false, width=120, height=30)
+        GLMakie.rowsize!(controls, 2, GLMakie.Fixed(40))
 
         GLMakie.on(max_area_button.clicks) do _
             refine_to_max_area!(TC, max_area_from_slider_exponent(TC, max_area_slider.value[]); verbose=verbose)
