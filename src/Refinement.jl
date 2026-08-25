@@ -90,16 +90,10 @@ function triangle_intersects_window(TC::TriangulationCache, triangle::Vector{Int
 end
 
 # List incomplete triangles worth refining.
-function candidate_triangles(TC::TriangulationCache; max_area=nothing)
+function candidate_triangles(TC::TriangulationCache)
     min_area = scaled_min_refinement_area(TC)
     triangle_areas = [(T, area_of_triangle(TC, T)) for T in incomplete_triangles(TC) if triangle_intersects_window(TC, T)]
-    # `min_area` is the permanent safety cutoff; `max_area` is an optional target cutoff.
-    # When both are present, a triangle must be larger than both to be refined.
-    selected = if max_area === nothing
-        [item for item in triangle_areas if item[2] > min_area]
-    else
-        [item for item in triangle_areas if item[2] > max_area && item[2] > min_area]
-    end
+    selected = [item for item in triangle_areas if item[2] > min_area]
     return first.(sort(selected; by=last, rev=true))
 end
 
@@ -109,12 +103,12 @@ function count_small_refinement_triangles(TC::TriangulationCache)
     return count(T -> area_of_triangle(TC, T) <= min_area, incomplete_triangles(TC))
 end
 
-# Collect new points within the budget, window, and min/max area
-function collect_refinement_points(TC::TriangulationCache, budget::Union{Nothing,Int}; max_area=nothing)
+# Collect new points within the budget, window, and minimum area cutoff.
+function collect_refinement_points(TC::TriangulationCache, budget::Union{Nothing,Int})
     budget === 0 && return Vector{Vector{Float64}}()
     new_points = Vector{Vector{Float64}}()
     queued_keys = Set{PointKey}()
-    for T in candidate_triangles(TC; max_area=max_area)
+    for T in candidate_triangles(TC)
         candidates = uncached_refinement_points(TC, refinement_points(TC, T), queued_keys)
         isempty(candidates) && continue
         allowed = budget === nothing ? length(candidates) : min(length(candidates), budget - length(new_points))
@@ -174,9 +168,9 @@ end
 ############################
 
 # Run one refinement pass.
-function refine_one_pass!(TC::TriangulationCache; max_refinement_area=nothing, budget=nothing, verbose=is_verbose(TC))
+function refine_one_pass!(TC::TriangulationCache; budget=nothing, verbose=is_verbose(TC))
     pass_budget = effective_refinement_budget(TC, budget)
-    points = collect_refinement_points(TC, pass_budget; max_area=max_refinement_area)
+    points = collect_refinement_points(TC, pass_budget)
     isempty(points) && (print_refinement_summary(0, count_small_refinement_triangles(TC)); return 0)
     verbose && println("Refinement pass: selected ", length(points), " new point(s) from incomplete triangles.")
     inserted = evaluate_and_insert_points!(TC, points; verbose=verbose)
@@ -190,7 +184,10 @@ end
 function refine_to_min_area!(TC::TriangulationCache, min_refinement_area::Real; budget=nothing, verbose=is_verbose(TC))
     budget === nothing || budget isa Integer || error("Refinement budget must be an integer.")
     budget === nothing || budget >= 0 || error("Refinement budget must be nonnegative.")
-    TC.min_refinement_area = Float64(min_refinement_area)
+    resolved_min_refinement_area = Float64(min_refinement_area)
+    isfinite(resolved_min_refinement_area) || error("min_refinement_area must be finite.")
+    resolved_min_refinement_area > 0 || error("Iterative min_refinement_area must be positive.")
+    TC.min_refinement_area = resolved_min_refinement_area
     resolution_used = 0
     pass = 0
     while true
@@ -207,7 +204,7 @@ function refine_to_min_area!(TC::TriangulationCache, min_refinement_area::Real; 
 end
 
 # Refine until a local call budget is spent.
-function refine_with_budget!(TC::TriangulationCache, budget::Integer; max_refinement_area=nothing, verbose=is_verbose(TC))
+function refine_with_budget!(TC::TriangulationCache, budget::Integer; verbose=is_verbose(TC))
     budget >= 0 || error("Refinement budget must be nonnegative.")
     remaining = Int(budget)
     resolution_used = 0
@@ -215,7 +212,7 @@ function refine_with_budget!(TC::TriangulationCache, budget::Integer; max_refine
     while remaining > 0
         pass += 1
         verbose && println("Iterative refinement pass ", pass, ": remaining call budget before pass is ", remaining, ".")
-        inserted = refine_one_pass!(TC; max_refinement_area=max_refinement_area, budget=remaining, verbose=verbose)
+        inserted = refine_one_pass!(TC; budget=remaining, verbose=verbose)
         resolution_used += inserted
         remaining -= inserted
         if inserted == 0 
@@ -228,7 +225,7 @@ end
 
 # Refine a TriangulationCache.
 """
-    refine!(TC::TriangulationCache; by_min_area=nothing, max_refinement_area=nothing, budget=nothing, verbose=TC.verbose)
+    refine!(TC::TriangulationCache; min_refinement_area=nothing, budget=nothing, verbose=TC.verbose)
 
 Refine a `TriangulationCache`.
 
@@ -241,13 +238,15 @@ calls are spent. If no eligible refinement points remain before the budget is
 spent, an error is thrown. Otherwise, one refinement pass uses `TC.oracle_budget`
 as its cap.
 
-If `by_min_area` is supplied, `TC.min_refinement_area` is updated and refinement
-repeats until a pass adds no new points.
+If `min_refinement_area` is supplied, `TC.min_refinement_area` is updated and
+refinement repeats until every incomplete triangle in the current window is at
+or below the resulting area cutoff. Iterative minimum-area refinement requires
+a positive, finite value.
 """
-function refine!(TC::TriangulationCache; by_min_area=nothing, max_refinement_area=nothing, budget=nothing, verbose=is_verbose(TC), kwargs...)
-    by_min_area === nothing || return refine_to_min_area!(TC, by_min_area; budget=budget, verbose=verbose)
-    budget === nothing || return refine_with_budget!(TC, budget; max_refinement_area=max_refinement_area, verbose=verbose)
-    return refine_one_pass!(TC; max_refinement_area=max_refinement_area, budget=budget, verbose=verbose)
+function refine!(TC::TriangulationCache; min_refinement_area=nothing, budget=nothing, verbose=is_verbose(TC))
+    min_refinement_area === nothing || return refine_to_min_area!(TC, min_refinement_area; budget=budget, verbose=verbose)
+    budget === nothing || return refine_with_budget!(TC, budget; verbose=verbose)
+    return refine_one_pass!(TC; verbose=verbose)
 end
 
 # Refine until the oracle budget is spent.
@@ -260,24 +259,6 @@ function refine_until_budget_exhausted!(TC::TriangulationCache; verbose=is_verbo
         pass += 1
         verbose && println("Iterative refinement pass ", pass, ": remaining oracle budget before pass is ", budget, ".")
         inserted = refine_one_pass!(TC; verbose=verbose)
-        resolution_used += inserted
-        inserted == 0 && break
-    end
-    return resolution_used
-end
-
-# Refine until large incomplete triangles are gone.
-function refine_to_max_area!(TC::TriangulationCache, max_area::Real; verbose=is_verbose(TC))
-    if max_area < scaled_min_refinement_area(TC)
-        TC.min_refinement_area = 0.99 * Float64(max_area) / bounding_box_area(TC)
-        verbose && println("Lowered min_refinement_area to ", TC.min_refinement_area, " so the scaled minimum triangle area is below max_refinement_area = ", max_area, ".")
-    end
-    resolution_used = 0
-    pass = 0
-    while any(T -> area_of_triangle(TC, T) > max_area, incomplete_triangles(TC))
-        pass += 1
-        verbose && println("Iterative refinement pass ", pass, ": refining incomplete triangles above max_refinement_area = ", max_area, ".")
-        inserted = refine_one_pass!(TC; max_refinement_area=max_area, verbose=verbose)
         resolution_used += inserted
         inserted == 0 && break
     end

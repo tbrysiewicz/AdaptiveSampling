@@ -284,24 +284,24 @@ end
 # Interactive Controls
 ############################
 
-function max_area_from_slider_exponent(TC::TriangulationCache, exponent::Real)
-    return bounding_box_area(TC) * 10.0 ^ (-Int(round(exponent)))
+function min_refinement_area_from_slider_exponent(exponent::Real)
+    return 10.0 ^ (-Int(round(exponent)))
 end
 
-function default_max_area_slider_range()
+function default_min_refinement_area_slider_range()
     return 2:6
 end
 
-function default_max_area_slider_start(TC::TriangulationCache, slider_range)
-    if TC.max_refinement_area === nothing || TC.max_refinement_area <= 0
-        return first(slider_range)
+function default_min_refinement_area_slider_start(TC::TriangulationCache, slider_range)
+    if !isfinite(TC.min_refinement_area) || TC.min_refinement_area <= 0
+        return last(slider_range)
     end
-    default_start = Int(round(-log10(TC.max_refinement_area / bounding_box_area(TC))))
+    default_start = Int(round(-log10(TC.min_refinement_area)))
     return slider_range[argmin(abs.(slider_range .- default_start))]
 end
 
-function max_area_slider_label(exponent::Real)
-    return "Max area: window * 1e-" * string(Int(round(exponent)))
+function min_refinement_area_slider_label(exponent::Real)
+    return "Min area: window * 1e-" * string(Int(round(exponent)))
 end
 
 function navigate_and_refine!(
@@ -338,10 +338,9 @@ function add_refine_button!(
         button_refinement_passes=1,
         navigation_step=0.20,
         zoom_step=0.20,
-        refine_button_min_area_factor=0.80,
-        max_area_refine_controls=true,
-        max_area_slider_range=default_max_area_slider_range(),
-        max_area_slider_start=nothing,
+        min_refinement_area_controls=true,
+        min_refinement_area_slider_range=default_min_refinement_area_slider_range(),
+        min_refinement_area_slider_start=nothing,
         navigation_initial_resolution=250,
         navigation_refinement_budget=1000,
         plot_triangle_edges=false,
@@ -361,7 +360,7 @@ function add_refine_button!(
     edge_button = GLMakie.Button(controls[1, 8]; label="Edges", tellwidth=false, width=84, height=30)
     edge_visible = Ref(Bool(get(kwargs, :edges, plot_triangle_edges)))
     GLMakie.rowgap!(fig.layout, 8)
-    GLMakie.rowsize!(fig.layout, 2, GLMakie.Fixed(max_area_refine_controls ? 92 : 52))
+    GLMakie.rowsize!(fig.layout, 2, GLMakie.Fixed(min_refinement_area_controls ? 92 : 52))
     GLMakie.rowsize!(controls, 1, GLMakie.Fixed(40))
     GLMakie.rowgap!(controls, 4)
 
@@ -375,29 +374,28 @@ function add_refine_button!(
         triangle_edge_linewidth=triangle_edge_linewidth,
         kwargs...)
 
-    if max_area_refine_controls
-        slider_range = collect(max_area_slider_range)
-        isempty(slider_range) && error("max_area_slider_range must contain at least one value.")
-        slider_start = max_area_slider_start === nothing ? default_max_area_slider_start(TC, slider_range) : max_area_slider_start
-        max_area_slider = GLMakie.Slider(controls[2, 2:4]; range=slider_range, startvalue=slider_start, tellwidth=true, width=260)
-        max_area_label = GLMakie.Label(
+    if min_refinement_area_controls
+        slider_range = collect(min_refinement_area_slider_range)
+        isempty(slider_range) && error("min_refinement_area_slider_range must contain at least one value.")
+        slider_start = min_refinement_area_slider_start === nothing ? default_min_refinement_area_slider_start(TC, slider_range) : min_refinement_area_slider_start
+        min_refinement_area_slider = GLMakie.Slider(controls[2, 2:4]; range=slider_range, startvalue=slider_start, tellwidth=true, width=260)
+        min_refinement_area_label = GLMakie.Label(
             controls[2, 1],
-            GLMakie.lift(max_area_slider_label, max_area_slider.value);
+            GLMakie.lift(min_refinement_area_slider_label, min_refinement_area_slider.value);
             tellwidth=false,
-            width=130,
+            width=160,
         )
-        max_area_button = GLMakie.Button(controls[2, 5]; label="Fully Refine", tellwidth=false, width=120, height=30)
+        fully_refine_button = GLMakie.Button(controls[2, 5]; label="Fully Refine", tellwidth=false, width=120, height=30)
         GLMakie.rowsize!(controls, 2, GLMakie.Fixed(40))
 
-        GLMakie.on(max_area_button.clicks) do _
-            refine_to_max_area!(TC, max_area_from_slider_exponent(TC, max_area_slider.value[]); verbose=verbose)
+        GLMakie.on(fully_refine_button.clicks) do _
+            refine!(TC; min_refinement_area=min_refinement_area_from_slider_exponent(min_refinement_area_slider.value[]), verbose=verbose)
             redraw()
         end
     end
 
     GLMakie.on(refine_button.clicks) do _
         for _ in 1:button_refinement_passes
-            TC.min_refinement_area *= refine_button_min_area_factor
             refine!(TC)
         end
         redraw()
@@ -462,8 +460,10 @@ Useful keyword arguments:
 - `zoom_step`: zoom amount as a fraction of window size.
 - `navigation_refinement_budget`: oracle-call budget after pan/zoom.
 - `navigation_initial_resolution`: coarse mesh size seeded after pan/zoom.
-- `max_area_refine_controls`: add exponent slider and Fully Refine button.
-- `max_area_slider_range`: integer exponents for `window_area * 1e-X`, default `2:6`.
+- `min_refinement_area_controls`: add a slider that selects the normalized
+  minimum used by the Fully Refine button.
+- `min_refinement_area_slider_range`: integer exponents for a normalized
+  minimum area of `1e-X`, default `2:6`.
 - `figure_size`: Makie figure size, default `(900, 900)`.
 - `xlabel`: axis x label, default `"x"`.
 - `ylabel`: axis y label, default `"y"`.
@@ -516,20 +516,21 @@ end
     visualize(function_oracle::Function; kwargs...) -> (TriangulationCache, GLMakie.Figure)
 
 Construct, refine, display, and return a `TriangulationCache` and its Makie
-figure. `total_resolution` is the overall oracle-call budget. If
-`initial_resolution` is supplied, it controls the initialization mesh size;
-otherwise initialization uses one quarter of `total_resolution`. Refinement
-then uses the remaining budget.
+figure. `total_resolution` is the overall oracle-call budget unless
+`min_refinement_area` is supplied. In that case, refinement continues until no
+incomplete triangle in the current window exceeds
+`min_refinement_area * window_area`. If `initial_resolution` is supplied, it
+controls the initialization mesh size; otherwise initialization uses one
+quarter of `total_resolution`.
 """
 const TRIANGULATION_CACHE_VISUALIZE_KEYWORDS = Set([
     :xlims,
     :ylims,
     :strategy,
-    :min_refinement_area,
     :is_complete,
 ])
 
-function visualize(function_oracle::Function; total_resolution=TRIANGULATION_CACHE_DEFAULT_TOTAL_RESOLUTION, initial_resolution=nothing, resolution=nothing, max_refinement_area=nothing, verbose=true, kwargs...)
+function visualize(function_oracle::Function; total_resolution=TRIANGULATION_CACHE_DEFAULT_TOTAL_RESOLUTION, initial_resolution=nothing, resolution=nothing, min_refinement_area=nothing, verbose=true, kwargs...)
     if resolution !== nothing
         total_resolution == TRIANGULATION_CACHE_DEFAULT_TOTAL_RESOLUTION || error("Use `total_resolution`, not both `resolution` and `total_resolution`.")
         total_resolution = resolution
@@ -552,9 +553,10 @@ function visualize(function_oracle::Function; total_resolution=TRIANGULATION_CAC
         end
     end
 
+    min_refinement_area === nothing || (cache_kwargs[:min_refinement_area] = Float64(min_refinement_area))
     TC = TriangulationCache(function_oracle; resolution=resolved_initial, verbose=verbose, cache_kwargs...)
-    if max_refinement_area !== nothing
-        refine_to_max_area!(TC, Float64(max_refinement_area); verbose=verbose)
+    if min_refinement_area !== nothing
+        refine!(TC; min_refinement_area=Float64(min_refinement_area), verbose=verbose)
         TC.oracle_budget = nothing
     else
         TC.oracle_budget = refinement_budget

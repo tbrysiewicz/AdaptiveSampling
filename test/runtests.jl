@@ -80,6 +80,7 @@ using AdaptiveVisualization
         @test inserted > 0
         @test length(AdaptiveVisualization.function_values(TC)) > before
         @test TC.total_oracle_calls == length(AdaptiveVisualization.function_values(TC))
+        @test !isempty(AdaptiveVisualization.candidate_triangles(TC))
     end
 
     @testset "Refinement call budget" begin
@@ -118,28 +119,50 @@ using AdaptiveVisualization
             verbose=false,
         )
 
-        inserted = refine!(TC; by_min_area=0.25, verbose=false)
+        inserted = refine!(TC; min_refinement_area=0.1, verbose=false)
 
-        @test inserted == 0
-        @test TC.min_refinement_area == 0.25
-        @test AdaptiveVisualization.scaled_min_refinement_area(TC) == 1.5
+        @test inserted > 0
+        @test TC.min_refinement_area == 0.1
+        @test isapprox(AdaptiveVisualization.scaled_min_refinement_area(TC), 0.6)
+        @test isempty(AdaptiveVisualization.candidate_triangles(TC))
+        @test_throws ErrorException refine!(TC; min_refinement_area=0.0, verbose=false)
     end
 
-    @testset "Max-area slider exponent mapping" begin
+    @testset "Minimum-area slider exponent mapping" begin
         TC = TriangulationCache(points -> [p[1] + p[2] for p in points];
             xlims=[-1, 1],
             ylims=[-1, 1],
             resolution=9,
-            max_refinement_area=4e-4,
+            min_refinement_area=4e-4,
             verbose=false,
         )
 
-        slider_range = AdaptiveVisualization.default_max_area_slider_range()
+        slider_range = AdaptiveVisualization.default_min_refinement_area_slider_range()
 
         @test collect(slider_range) == collect(2:6)
-        @test AdaptiveVisualization.default_max_area_slider_start(TC, collect(slider_range)) == 4
-        @test isapprox(AdaptiveVisualization.max_area_from_slider_exponent(TC, 5), 4e-5)
-        @test AdaptiveVisualization.max_area_slider_label(6) == "Max area: window * 1e-6"
+        @test AdaptiveVisualization.default_min_refinement_area_slider_start(TC, collect(slider_range)) == 3
+        @test AdaptiveVisualization.min_refinement_area_from_slider_exponent(5) == 1e-5
+        @test AdaptiveVisualization.min_refinement_area_slider_label(6) == "Min area: window * 1e-6"
+    end
+
+    @testset "Visualization refinement to minimum area" begin
+        never_complete(vertices, values; kwargs...) = false
+        TC, fig = visualize(points -> zeros(Int, length(points));
+            xlims=[0, 2],
+            ylims=[0, 3],
+            total_resolution=9,
+            initial_resolution=9,
+            strategy=:barycenter,
+            min_refinement_area=0.1,
+            is_complete=never_complete,
+            buttons=false,
+            verbose=false,
+        )
+
+        @test fig isa AdaptiveVisualization.GLMakie.Figure
+        @test TC.min_refinement_area == 0.1
+        @test TC.total_oracle_calls > 9
+        @test isempty(AdaptiveVisualization.candidate_triangles(TC))
     end
 
     @testset "Stable categorical color value order" begin
@@ -226,5 +249,7 @@ using AdaptiveVisualization
         @test_throws Exception TriangulationCache((x, y) -> x + y; strategy=:quadtree, verbose=false)
         @test_throws Exception TriangulationCache((x, y) -> x + y; initial_resolution=9, verbose=false)
         @test_throws Exception TriangulationCache((x, y) -> x + y; total_resolution=9, verbose=false)
+        @test_throws Exception TriangulationCache((x, y) -> x + y; min_refinement_area=-1, verbose=false)
+        @test_throws Exception TriangulationCache((x, y) -> x + y; min_refinement_area=NaN, verbose=false)
     end
 end

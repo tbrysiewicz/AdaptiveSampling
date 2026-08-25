@@ -42,7 +42,6 @@ function TriangulationCache(
         resolution = TRIANGULATION_CACHE_DEFAULT_TOTAL_RESOLUTION,
         strategy::Symbol = :sierpinski,
         min_refinement_area = TRIANGULATION_CACHE_DEFAULT_MIN_REFINEMENT_AREA,
-        max_refinement_area = nothing,
         is_complete = nothing,
         verbose::Bool = true,
         kwargs...)
@@ -57,6 +56,9 @@ function TriangulationCache(
     ylimits = Float64.(collect(ylims))
     length(xlimits) == 2 || error("xlims must have two entries.")
     length(ylimits) == 2 || error("ylims must have two entries.")
+    resolved_min_refinement_area = Float64(min_refinement_area)
+    isfinite(resolved_min_refinement_area) || error("min_refinement_area must be finite.")
+    resolved_min_refinement_area >= 0 || error("min_refinement_area must be nonnegative.")
 
     parameters = triangulation_initial_points(xlimits, ylimits, resolution)
     evaluation = try_evaluate_triangulation_oracle(function_oracle, parameters)
@@ -78,8 +80,7 @@ function TriangulationCache(
         strategy,
         length(parameters),
         nothing,
-        Float64(min_refinement_area),
-        max_refinement_area === nothing ? nothing : Float64(max_refinement_area),
+        resolved_min_refinement_area,
         xlimits,
         ylimits,
         [(xlimits[1], xlimits[2], ylimits[1], ylimits[2])],

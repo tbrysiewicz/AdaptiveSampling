@@ -14,8 +14,9 @@ Keyword arguments:
 - `xlims`, `ylims`: domain limits, default `[-1, 1]`.
 - `resolution`: initial mesh oracle-call target.
 - `strategy`: one of `:random`, `:sierpinski`, `:barycenter`.
-- `min_refinement_area`: normalized minimum triangle area; scaled by window area.
-- `max_refinement_area`: optional iterative refinement target.
+- `min_refinement_area`: finite, nonnegative minimum incomplete-triangle area,
+  normalized by the current window area; refinement skips triangles at or below
+  this threshold.
 - `is_complete`: custom completeness predicate `(vertices, values; kwargs...)`,
   where `vertices` is an `NTuple{3,NTuple{2,Float64}}` and `values` contains the
   three corresponding oracle values.
@@ -57,7 +58,6 @@ mutable struct TriangulationCache
 
     oracle_budget::Union{Nothing,Int64} #user bound
     min_refinement_area::Float64 #user bound
-    max_refinement_area::Union{Nothing,Float64} #user bound
 
     xlims::Vector{Float64}#user visualization bound
     ylims::Vector{Float64}
