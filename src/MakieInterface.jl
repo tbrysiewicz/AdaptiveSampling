@@ -530,7 +530,7 @@ const TRIANGULATION_CACHE_VISUALIZE_KEYWORDS = Set([
     :is_complete,
 ])
 
-function visualize(function_oracle::Function; total_resolution=TRIANGULATION_CACHE_DEFAULT_TOTAL_RESOLUTION, initial_resolution=nothing, resolution=nothing, min_refinement_area=nothing, verbose=true, kwargs...)
+function visualize(function_oracle::Function; total_resolution=TRIANGULATION_CACHE_DEFAULT_TOTAL_RESOLUTION, initial_resolution=nothing, resolution=nothing, min_refinement_area=nothing, verbose=false, kwargs...)
     if resolution !== nothing
         total_resolution == TRIANGULATION_CACHE_DEFAULT_TOTAL_RESOLUTION || error("Use `total_resolution`, not both `resolution` and `total_resolution`.")
         total_resolution = resolution

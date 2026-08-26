@@ -20,7 +20,7 @@ Keyword arguments:
 - `is_complete`: custom completeness predicate `(vertices, values; kwargs...)`,
   where `vertices` is an `NTuple{3,NTuple{2,Float64}}` and `values` contains the
   three corresponding oracle values.
-- `verbose`: whether to print progress.
+- `verbose`: whether to print progress, default `false`.
 
 The value `:wildcard` is special in the default completeness rule: it is treated
 as equal to every other value. Non-real values are handled as discrete
@@ -74,10 +74,13 @@ end
 
 function Base.show(io::IO, TC::TriangulationCache)
     n_incomplete = length(incomplete_triangle_keys(TC))
-    n_complete = count_solid_triangles(TC) - n_incomplete
-    print(io, "TriangulationCache with ", length(function_values(TC)), " function values, ",
-        n_complete, " complete triangles, and ",
-        n_incomplete, " incomplete triangles.")
+    n_triangles = count_solid_triangles(TC)
+    counts = (length(function_values(TC)), n_triangles)
+    count_width = maximum(length, string.(counts))
+    print(io, "TriangulationCache with:\n",
+        "  ", lpad(string(counts[1]), count_width), " function values\n",
+        "  ", lpad(string(counts[2]), count_width), " (", n_incomplete,
+        ") triangles (incomplete)")
 end
 
 #######################

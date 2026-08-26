@@ -43,7 +43,7 @@ function TriangulationCache(
         strategy::Symbol = :sierpinski,
         min_refinement_area = TRIANGULATION_CACHE_DEFAULT_MIN_REFINEMENT_AREA,
         is_complete = nothing,
-        verbose::Bool = true,
+        verbose::Bool = false,
         kwargs...)
 
     isempty(kwargs) || error("Unsupported TriangulationCache keyword(s): $(join(keys(kwargs), ", ")).")
