@@ -15,8 +15,8 @@ Keyword arguments:
 - `resolution`: initial mesh oracle-call target.
 - `strategy`: one of `:random`, `:sierpinski`, `:barycenter`.
 - `min_refinement_area`: finite, nonnegative minimum incomplete-triangle area,
-  normalized by the current window area; refinement skips triangles at or below
-  this threshold.
+  normalized by the current window area; defaults to `1e-5`, and refinement
+  skips triangles at or below this threshold.
 - `is_complete`: custom completeness predicate `(vertices, values; kwargs...)`,
   where `vertices` is an `NTuple{3,NTuple{2,Float64}}` and `values` contains the
   three corresponding oracle values.

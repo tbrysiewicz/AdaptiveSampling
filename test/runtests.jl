@@ -239,6 +239,7 @@ using AdaptiveVisualization
             resolution=25,
             verbose=false,
         )
+        @test categorical_TC.min_refinement_area == 1e-5
         @test is_discrete(AdaptiveVisualization.output_values(categorical_TC))
 
         fig = visualize(categorical_TC; buttons=false, edges=true)
