@@ -1,6 +1,10 @@
-include("test/HCtests.jl")
-K = KuramotoModel(3)
-f = real_solution_function(K)
+using AdaptiveVisualization
+using HomotopyContinuation
+
+K = kuramoto_model(3)
+f = real_solution_function(K;
+    plane_points=[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
+)
 TC = TriangulationCache(f;
                      xlims=[-.75,.75],
                      ylims=[-.75, .75],

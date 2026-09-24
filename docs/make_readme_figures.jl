@@ -4,8 +4,6 @@ using HomotopyContinuation
 using LinearAlgebra
 using Random
 
-include(joinpath(@__DIR__, "..", "test", "HCtests.jl"))
-
 const ASSET_DIR = joinpath(@__DIR__, "assets")
 const README_FIGURE_RESOLUTION = 144
 const README_FIGURE_REFINEMENT_PASSES = 5
@@ -25,24 +23,6 @@ function refine_readme_figure!(TC)
         refine!(TC; verbose=false)
     end
     return TC
-end
-
-function KuramotoModel(n)
-    @var w[1:(n-1)], s[1:n], c[1:n]
-    equations = []
-    for i in 1:(n-1)
-        coupling_sum = 0
-        for j in 1:n
-            coupling_sum += s[i] * c[j] - s[j] * c[i]
-        end
-        f_1 = w[i] - (1 / n) * coupling_sum
-        f_2 = c[i]^2 + s[i]^2 - 1
-        f_1 = subs(f_1, [s[n], c[n]] => [0, 1])
-        f_2 = subs(f_2, [s[n], c[n]] => [0, 1])
-        f_1 == 0 || push!(equations, f_1)
-        f_2 == 0 || push!(equations, f_2)
-    end
-    return System(equations; variables=[s[1:n-1]..., c[1:n-1]...], parameters=[w[1:n-1]...])
 end
 
 function disk_indicator_figure()
@@ -107,8 +87,10 @@ end
 
 function kuramoto_figure(; resolution=README_FIGURE_RESOLUTION, refinement_passes=README_FIGURE_REFINEMENT_PASSES, title=nothing)
     Random.seed!(3)
-    F = KuramotoModel(3)
-    f = real_solution_function(F)
+    F = kuramoto_model(3)
+    f = real_solution_function(F;
+        plane_points=[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
+    )
     TC = TriangulationCache(f;
         xlims=[-1, 1],
         ylims=[-1, 1],
@@ -144,8 +126,10 @@ function dietmaier_kuramoto_figure(;
         resolution=72,
         refinement_passes=4)
     Random.seed!(3)
-    F = KuramotoModel(3)
-    f = dietmaier_function(F)
+    F = kuramoto_model(3)
+    f = dietmaier_function(F;
+        plane_points=[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
+    )
     TC = TriangulationCache(f;
         xlims=[-1, 1],
         ylims=[-1, 1],

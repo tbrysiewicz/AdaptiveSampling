@@ -43,6 +43,10 @@ function value_label(value::Real)
     return value == round(value) ? string(Int(round(value))) : string(value)
 end
 
+function value_label(value::AbstractVector)
+    return "[" * join(value_label.(value), ", ") * "]"
+end
+
 function value_label(value)
     return value isa Real ? value_label(value) : string(value)
 end
@@ -104,8 +108,33 @@ function append_missing_values!(values::Vector{Any}, candidates)
 end
 
 function sort_numeric_values!(values::Vector{Any})
-    all(value -> value isa Real, values) || return values
-    return sort!(values)
+    isempty(values) && return values
+
+    # Values of unrelated types (for example vector-valued invariants and
+    # status strings) need not be mutually comparable. Keep type-groups in
+    # discovery order and sort only within each homogeneous group.
+    groups = Vector{Vector{Any}}()
+    group_indices = Dict{DataType,Int}()
+    for value in values
+        group_index = get!(group_indices, typeof(value)) do
+            push!(groups, Any[])
+            length(groups)
+        end
+        push!(groups[group_index], value)
+    end
+
+    for group in groups
+        try
+            sorted_group = all(value -> value isa AbstractVector, group) ?
+                sort(group; by=Tuple) : sort(group)
+            copyto!(group, sorted_group)
+        catch
+            # Preserve discovery order when a homogeneous group is unsortable.
+        end
+    end
+
+    copyto!(values, reduce(vcat, groups))
+    return values
 end
 
 function stable_plot_value_order!(TC::TriangulationCache, visible_values; plot_log_transform=false)
@@ -120,7 +149,10 @@ end
 function vertex_plot_values(triangle_values)
     colors = Vector{Any}(undef, 3 * length(triangle_values))
     for (i, value) in pairs(triangle_values)
-        colors[(3i - 2):(3i)] .= value
+        # A category may itself be iterable (for example, a vector-valued
+        # invariant). Treat it as one atomic value rather than broadcasting
+        # its entries across the triangle's three vertices.
+        colors[(3i - 2):(3i)] .= Ref(value)
     end
     return colors
 end

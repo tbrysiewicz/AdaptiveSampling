@@ -51,6 +51,110 @@ values available.
   <img src="docs/assets/disk-indicator.png" alt="Adaptive sampling of the disk indicator quick-start function" width="450">
 </p>
 
+## HomotopyContinuation
+
+Load HomotopyContinuation alongside AdaptiveVisualization to visualize a
+polynomial system directly. The integration activates automatically; install
+HomotopyContinuation in your active environment if needed with
+`Pkg.add("HomotopyContinuation")`.
+
+```julia
+using AdaptiveVisualization
+using HomotopyContinuation
+
+@var x y a b
+F = System([x^2 + y^2 - a, x - y + b^3]; variables=[x, y], parameters=[a, b])
+
+TC, fig = visualize(F)
+TC, fig = visualize(F; near=[2.3123, 0.0])
+TC, fig = visualize(F; plane_points=[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]])
+TC, fig = visualize(F; func=:real)          # Default: numerical real-solution count
+TC, fig = visualize(F; func=:certify_real)  # Optional soft certificates
+TC, fig = visualize(F; func=:positive)     # All variable coordinates positive
+TC, fig = visualize(F; func=:dietmaier)    # Minimum nonzero imaginary L1 norm
+```
+
+`visualize(F; ...)` returns `(TC, fig)` and accepts the usual visualization and
+refinement keywords. Systems must have at least two parameters. The same plane
+keywords apply to every HC evaluator:
+
+- `near=p` centers the view at `p`. For two parameters, it keeps the original
+  coordinate axes. For more parameters, it completes the plane points as
+  `[p, p + v1, p + v2]` with random orthonormal directions `v1`, `v2`.
+- Three `plane_points=[p, q, r]` override `near` completely. Supply real, finite
+  coordinates in the order returned by `parameters(F)`, with independent
+  directions `q - p` and `r - p`; their lengths are used as supplied.
+- With neither keyword, a two-parameter system uses its original parameter
+  coordinates, centered at zero. Systems with more parameters use a random real
+  center and plane. Pass a seeded `rng`, such as `MersenneTwister(42)` from
+  `Random`, to reproduce random choices.
+
+Displayed coordinates `(u, v)` map to parameters by
+`p + zoomer * (u * (q - p) + v * (r - p))`. Thus `(0, 0)` represents `p`;
+`xlims` and `ylims` set the displayed window, and `zoomer` scales it in parameter
+space. For example, `near=p, zoomer=0.01` explores a small neighborhood of `p`.
+For a two-parameter system, the default is equivalent to
+`plane_points=[[0, 0], [1, 0], [0, 1]]`, in the order returned by `parameters(F)`.
+
+| `func` | Value at each sampled parameter point |
+| --- | --- |
+| `:certify_real` | Real-solution count using HC certification and checks for nonreal solutions. |
+| `:real` (default) | Numerical real-solution count, with no certification. |
+| `:positive` | Numerical count of real solutions with every variable strictly positive. |
+| `:dietmaier` | Minimum imaginary L1 norm exceeding `imaginary_zero_atol`, or zero if none does. |
+
+`:certify_real` produces **soft certificates because its input is floating
+point**. These describe the system supplied numerically to HC, rather than an
+exact symbolic guarantee for the intended coefficients. The evaluator checks
+distinct certified solutions, classifies real and nonreal solutions, and retries
+unresolved samples. Samples that remain unresolved are represented by `:wildcard`.
+
+The numerical counting modes use `real_tol` to classify solutions as real. `:positive`
+also requires every real coordinate to exceed `positivity_tol` (default `0.0`);
+for example, `positivity_tol=1e-8` excludes coordinates at or below that threshold.
+The parity check applies to the total real count, never to the positive subset.
+`max_retries` controls additional attempts: five by default for `:certify_real`,
+two for numerical modes. Retry start solutions are prepared only when needed and
+reused across batches. Set `verbose=true` for diagnostics.
+
+Reusable evaluators prepare start solutions once and accept batches of displayed
+coordinates:
+
+```julia
+plane = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]
+f = real_solution_function(F; plane_points=plane)
+counts = f([[1.0, 0.0], [-1.0, 0.0]])  # [2, 0]
+TC, fig = visualize(f; xlims=[-1, 3], ylims=[-1, 1])
+
+f_certified = certify_real(F; near=[1.0, 0.0])
+f_positive = positive_solution_function(F; plane_points=plane)
+```
+
+To reuse a known generic fiber, provide `start_parameters` and `start_solutions`
+together. These starting parameters are independent of `near`. Advanced HC
+options can be passed as named tuples through `solver_options`,
+`monodromy_options`, and `certification_options`. The continuous
+`dietmaier_function` evaluator is described below.
+
+The `EXAMPLES` block at the end of
+[ext/HomotopyContinuationExt.jl](ext/HomotopyContinuationExt.jl) contains the
+`kuramoto_model`, `TwentySevenLines`, and `SpaceConics` constructors, the
+`expected_space_conic_degree` helper, and `run_twenty_seven_lines_example`.
+`kuramoto_model` is exported by AdaptiveVisualization; its implementation becomes
+available when HomotopyContinuation is loaded. The remaining helpers belong to
+the extension module. Loading the packages does not run examples or open figures.
+Access the remaining helpers through the module:
+
+```julia
+HCExamples = Base.get_extension(AdaptiveVisualization, :HomotopyContinuationExt)
+F = HCExamples.TwentySevenLines()
+TC, fig = visualize(F; func=:real)
+```
+
+Cubic-surface and conic examples can take substantially longer than the small
+polynomial example above. The legacy `test/HCtests.jl` path makes the example
+helper names available for existing scripts.
+
 ## Pipeline
 
 Flowchart for initializing a TriangulationCache: 
@@ -65,6 +169,18 @@ the resulting triangles as complete or incomplete.
 
 
 ## Kuramoto Example
+
+```julia
+using AdaptiveVisualization
+using HomotopyContinuation
+
+TC, fig = visualize(kuramoto_model(3);
+    func=:real,
+    plane_points=[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
+    xlims=[-1, 1],
+    ylims=[-1, 1],
+)
+```
 
 The grid below shows the real-solution count for the `n = 3` Kuramoto model.
 Columns are initialization resolutions `25`, `100`, `1600`, `2500`, and
@@ -162,14 +278,20 @@ the complex solutions. The `dietmaier_function` oracle solves the system at
 each sampled parameter point, computes the L1 norm of the imaginary parts of
 each complex solution, discards values below a numerical zero tolerance, and
 returns the minimum remaining norm. Small values indicate parameters where at
-least one solution is nearly real.
+least one solution is nearly real. Set `imaginary_zero_atol` to choose the zero
+tolerance; the evaluator returns zero if no nonzero imaginary norm remains.
+Use it directly as `visualize(F; func=:dietmaier, imaginary_zero_atol=1e-10)`
+or construct a reusable `dietmaier_function(F; ...)` evaluator.
 
 For the `n = 3` Kuramoto model:
 
 ```julia
+using Random
 Random.seed!(3)
-F = KuramotoModel(3)
-f = dietmaier_function(F)
+F = kuramoto_model(3)
+f = dietmaier_function(F;
+    plane_points=[[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]],
+)
 
 TC, fig = visualize(f;
     xlims = [-1, 1],

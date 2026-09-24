@@ -187,7 +187,54 @@ using AdaptiveVisualization
         )
 
         order = AdaptiveVisualization.stable_plot_value_order!(label_TC, ["border", "inside"])
-        @test order == ["inside", "outside", "border"]
+        @test order == ["border", "inside", "outside"]
+
+        rational_triples = [
+            Rational{Int}[0, 2, 0],
+            Rational{Int}[0, 1, 1],
+        ]
+        vertex_values = AdaptiveVisualization.vertex_plot_values(rational_triples)
+        @test vertex_values == [
+            rational_triples[1], rational_triples[1], rational_triples[1],
+            rational_triples[2], rational_triples[2], rational_triples[2],
+        ]
+        @test all(value -> value isa Vector{Rational{Int}}, vertex_values)
+        @test AdaptiveVisualization.value_label(rational_triples[1]) == "[0, 2, 0]"
+
+        triple_TC = TriangulationCache(points -> [
+                p[1] < 0 ? Rational{Int}[1, 0, 0] : Rational{Int}[0, 2, 0]
+                for p in points
+            ];
+            xlims=[-1, 1],
+            ylims=[-1, 1],
+            resolution=4,
+            verbose=false,
+        )
+        triple_order = AdaptiveVisualization.stable_plot_value_order!(
+            triple_TC,
+            [Rational{Int}[0, 1, 1]],
+        )
+        @test triple_order == [
+            Rational{Int}[0, 1, 1],
+            Rational{Int}[0, 2, 0],
+            Rational{Int}[1, 0, 0],
+        ]
+
+        mixed_order = Any[
+            Rational{Int}[1, 0, 0],
+            "unknown",
+            Rational{Int}[0, 2, 0],
+            "failed",
+            Rational{Int}[0, 1, 1],
+        ]
+        AdaptiveVisualization.sort_numeric_values!(mixed_order)
+        @test mixed_order == Any[
+            Rational{Int}[0, 1, 1],
+            Rational{Int}[0, 2, 0],
+            Rational{Int}[1, 0, 0],
+            "failed",
+            "unknown",
+        ]
     end
 
     @testset "Categorical complete triangle plotting" begin
@@ -252,5 +299,204 @@ using AdaptiveVisualization
         @test_throws Exception TriangulationCache((x, y) -> x + y; total_resolution=9, verbose=false)
         @test_throws Exception TriangulationCache((x, y) -> x + y; min_refinement_area=-1, verbose=false)
         @test_throws Exception TriangulationCache((x, y) -> x + y; min_refinement_area=NaN, verbose=false)
+    end
+end
+
+using Random
+using LinearAlgebra
+using HomotopyContinuation
+
+@testset "HomotopyContinuation integration" begin
+    extension = Base.get_extension(AdaptiveVisualization, :HomotopyContinuationExt)
+    @test extension !== nothing
+    @test nparameters(kuramoto_model(3)) == 2
+
+    @var x y z a b c
+    F = System([x^2 - a, y - b]; variables=[x, y], parameters=[a, b])
+    F3 = System([x^2 - a, y - b, z - c];
+        variables=[x, y, z], parameters=[a, b, c])
+    identity_plane = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]]
+
+    # Known start solutions avoid stochastic monodromy discovery in most tests.
+    # A nonreal start parameter also keeps paths to negative a away from a = 0.
+    start_parameters = ComplexF64[1 + im, 1 + im]
+    start_solutions = [
+        ComplexF64[sqrt(1 + im), 1 + im],
+        ComplexF64[-sqrt(1 + im), 1 + im],
+    ]
+    starts = (; start_parameters, start_solutions, max_retries=0)
+
+    @testset "Affine parameter plane" begin
+        coordinates = [[0.0, 0.0], [1.0, -2.0], [3.5, 4.0]]
+        for seed in (11, 27)
+            default_slice = extension.parameter_slice(F; rng=MersenneTwister(seed))
+            @test extension.parameter_values(default_slice, coordinates) == coordinates
+            centered_slice = extension.parameter_slice(F;
+                near=[2.0, 3.0], rng=MersenneTwister(seed))
+            @test extension.parameter_values(centered_slice, coordinates) ==
+                [p + [2.0, 3.0] for p in coordinates]
+        end
+        plane_points = [[2.0, 3.0], [4.0, 3.0], [3.0, 6.0]]
+        slice = extension.parameter_slice(F;
+            near=[91.0, 92.0], plane_points, zoomer=0.5, rng=MersenneTwister(1))
+        coordinates = [[0.0, 0.0], [1.0, 0.0], [0.0, 1.0], [-1.0, 2.0]]
+        expected = [[2.0, 3.0], [3.0, 3.0], [2.5, 4.5], [2.0, 6.0]]
+        @test all(isapprox.(extension.parameter_values(slice, coordinates), expected))
+        @test isempty(extension.parameter_values(slice, Vector{Float64}[]))
+
+        center = [2.0, 3.0, 5.0]
+        slice1 = extension.parameter_slice(F3;
+            near=center, plane_points=nothing, zoomer=0.25, rng=MersenneTwister(19))
+        slice2 = extension.parameter_slice(F3;
+            near=center, plane_points=nothing, zoomer=0.25, rng=MersenneTwister(19))
+        mapped1 = extension.parameter_values(slice1, coordinates[1:3])
+        mapped2 = extension.parameter_values(slice2, coordinates[1:3])
+        @test mapped1 == mapped2
+        @test mapped1[1] == center
+        directions = hcat(mapped1[2] - center, mapped1[3] - center)
+        @test directions' * directions ≈ 0.25^2 * Matrix{Float64}(I, 2, 2)
+
+        random_slice1 = extension.parameter_slice(F3;
+            near=nothing, plane_points=nothing, zoomer=1.0, rng=MersenneTwister(29))
+        random_slice2 = extension.parameter_slice(F3;
+            near=nothing, plane_points=nothing, zoomer=1.0, rng=MersenneTwister(29))
+        @test extension.parameter_values(random_slice1, coordinates) ==
+              extension.parameter_values(random_slice2, coordinates)
+    end
+
+    @testset "Parameter validation" begin
+        one_parameter = System([x^2 - a]; variables=[x], parameters=[a])
+        @test_throws ArgumentError extension.parameter_slice(one_parameter;
+            near=nothing, plane_points=nothing, zoomer=1.0, rng=MersenneTwister(1))
+        @test_throws ArgumentError extension.parameter_slice(F;
+            near=[1.0], plane_points=nothing, zoomer=1.0, rng=MersenneTwister(1))
+        @test_throws ArgumentError extension.parameter_slice(F;
+            near=[Inf, 1.0], plane_points=nothing, zoomer=1.0, rng=MersenneTwister(1))
+        for bad_plane in (
+            [[0.0, 0.0], [1.0, 0.0]],
+            [[0.0, 0.0], [1.0], [0.0, 1.0]],
+            [[0.0, 0.0], [1.0, 1.0], [2.0, 2.0]],
+        )
+            @test_throws ArgumentError extension.parameter_slice(F;
+                near=nothing, plane_points=bad_plane, zoomer=1.0, rng=MersenneTwister(1))
+        end
+        @test_throws ArgumentError extension.parameter_slice(F;
+            near=nothing, plane_points=identity_plane, zoomer=NaN, rng=MersenneTwister(1))
+        @test_throws ArgumentError visualize(F; func=:unsupported)
+        @test_throws ArgumentError real_solution_function(F;
+            plane_points=identity_plane, starts..., real_tol=-1.0)
+        @test_throws ArgumentError real_solution_function(F;
+            plane_points=identity_plane, start_parameters, start_solutions, max_retries=-1)
+    end
+
+    @testset "Numerical and soft-certified counts" begin
+        points = [[4.0, 2.0], [-1.0, 2.0], [4.0, -2.0], [4.0, 0.0], [9.0, 3.0]]
+        expected_real = [2, 0, 2, 2, 2]
+        expected_positive = [1, 0, 0, 0, 1]
+
+        @test real_solution_function(F; starts...)(points) == expected_real
+        for evaluator in (real_solution_function, certify_real, positive_solution_function, dietmaier_function)
+            centered = evaluator(F; near=[1.0, 2.0], starts...)
+            identity = evaluator(F; plane_points=identity_plane, starts...)
+            @test centered([[3.0, 0.0], [-2.0, 0.0]]) == identity([[4.0, 2.0], [-1.0, 2.0]])
+        end
+
+        # This option would be rejected by HC.certify. Numerical modes must never call it.
+        unused_certification_options = (this_is_not_a_certification_option=true,)
+        numerical = real_solution_function(F;
+            plane_points=identity_plane, starts...,
+            certification_options=unused_certification_options)
+        positive = positive_solution_function(F;
+            plane_points=identity_plane, starts...,
+            certification_options=unused_certification_options)
+        certified = certify_real(F;
+            plane_points=identity_plane, starts...,
+            certification_options=(max_precision=256,))
+
+        @test numerical isa Function
+        @test positive isa Function
+        @test certified isa Function
+        @test numerical(points) == expected_real
+        @test positive(points) == expected_positive
+        @test certified(points) == expected_real
+        @test numerical(reverse(points)) == reverse(expected_real)
+        @test isempty(numerical(Vector{Float64}[]))
+        @test isempty(positive(Vector{Float64}[]))
+        @test isempty(certified(Vector{Float64}[]))
+
+        # At a = 0, the double root cannot satisfy the nonsingular certification check.
+        @test certified([[0.0, 2.0]]) == [:wildcard]
+        retry_rng = MersenneTwister(41)
+        retrying_certified = certify_real(F;
+            plane_points=identity_plane, start_parameters, start_solutions,
+            max_retries=1, rng=retry_rng,
+            certification_options=(max_precision=256,))
+        mixed_points = [[4.0, 2.0], [0.0, 2.0], [-1.0, 2.0]]
+        draws_before_retry = rand(copy(retry_rng), UInt32, 4)
+        @test retrying_certified(mixed_points) == Any[2, :wildcard, 0]
+        draws_after_retry = rand(copy(retry_rng), UInt32, 4)
+        @test draws_after_retry != draws_before_retry
+        @test retrying_certified(mixed_points) == Any[2, :wildcard, 0]
+        # A second evaluation reuses its retry start rather than drawing another one.
+        @test rand(copy(retry_rng), UInt32, 4) == draws_after_retry
+
+        # An odd positive count is valid even though the system has degree two.
+        @test positive([[4.0, 2.0]]) == [1]
+        thresholded = positive_solution_function(F;
+            plane_points=identity_plane, starts..., positivity_tol=2.5)
+        @test thresholded([[4.0, 3.0], [9.0, 3.0]]) == [0, 1]
+
+        translated = real_solution_function(F;
+            near=[100.0, 100.0],
+            plane_points=[[4.0, 2.0], [5.0, 2.0], [4.0, 3.0]], starts...)
+        @test translated([[0.0, 0.0], [-5.0, 0.0]]) == [2, 0]
+
+        diagnostic = dietmaier_function(F; plane_points=identity_plane, starts...)
+        @test diagnostic([[4.0, 2.0], [-1.0, 2.0]]) ≈ [0.0, 1.0]
+    end
+
+    @testset "Automatic start solution preparation" begin
+        discovered = real_solution_function(F;
+            plane_points=identity_plane, max_retries=0,
+            rng=MersenneTwister(53), monodromy_options=(seed=UInt32(53),))
+        @test discovered([[4.0, 2.0], [-1.0, 2.0]]) == [2, 0]
+    end
+
+    @testset "Dietmaier visualization smoke test" begin
+        # For a < 0, x = ±im*sqrt(-a) and y = b, so the imaginary L1 norm is sqrt(-a).
+        for imaginary_zero_atol in (1e-10, 3.0)
+            TC, fig = visualize(F;
+                func=:dietmaier, imaginary_zero_atol, starts...,
+                xlims=[-4.0, -1.0], ylims=[1.0, 2.0],
+                total_resolution=4, initial_resolution=4, buttons=false,
+                certification_options=(this_is_not_a_certification_option=true,))
+            expected = [sqrt(-p[1]) for p in AdaptiveVisualization.input_points(TC)]
+            expected = [value > imaginary_zero_atol ? value : 0.0 for value in expected]
+            @test fig isa AdaptiveVisualization.GLMakie.Figure
+            @test length(expected) == 4
+            @test all(isapprox.(AdaptiveVisualization.function_values(TC), expected))
+        end
+    end
+
+    @testset "System visualization dispatch" begin
+        # The whole displayed square has a > 0 and b > 0, so no refinement is needed.
+        visual_options = (;
+            plane_points=[[4.0, 2.0], [5.0, 2.0], [4.0, 3.0]],
+            starts...,
+            xlims=[0.0, 1.0], ylims=[0.0, 1.0],
+            initial_resolution=4, total_resolution=4,
+            buttons=false, verbose=false,
+        )
+        for (mode, expected) in ((:real, 2), (:certify_real, 2), (:positive, 1), (:dietmaier, 0.0))
+            TC, fig = visualize(F; func=mode, visual_options...)
+            @test fig isa AdaptiveVisualization.GLMakie.Figure
+            @test length(AdaptiveVisualization.function_values(TC)) == 4
+            @test all(==(expected), AdaptiveVisualization.function_values(TC))
+        end
+        # A default visualization must not invoke certification.
+        TC, fig = visualize(F; visual_options...,
+            certification_options=(this_is_not_a_certification_option=true,))
+        @test fig isa AdaptiveVisualization.GLMakie.Figure
+        @test all(==(2), AdaptiveVisualization.function_values(TC))
     end
 end
